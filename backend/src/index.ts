@@ -3,32 +3,31 @@ import cors from "cors";
 import { createServer } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
-import { ArenaState, Robot, Match, RankingItem, RoundName, MainStatus } from "./types";
+import { ArenaState, Robot, Match, GroupTableItem } from "./types";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-const PORT = Number(process.env.PORT || 8080);
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
+const PORT = Number(process.env.PORT || 8080);
 
+/* ------------------ ESTADO GLOBAL ------------------ */
 let state: ArenaState = {
   robots: [],
   matches: [],
-  currentRound: null,
   currentMatchId: null,
   mainTimer: 0,
   mainStatus: "idle",
   recoveryTimer: 0,
   recoveryActive: false,
   winner: null,
-  ranking: []
+  lastWinner: null,
+  ranking: [],
+  groupTables: {}
 };
 
-let mainTick: NodeJS.Timeout | null = null;
-let recoveryTick: NodeJS.Timeout | null = null;
-
+/* ------------------ UTILITÁRIOS ------------------ */
 function broadcast(type: string, payload: any) {
   const msg = JSON.stringify({ type, payload });
   for (const c of wss.clients)
@@ -44,64 +43,62 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function computeRanking(): RankingItem[] {
-  const wins: Record<string, number> = {};
-  for (const r of state.robots) wins[r.id] = 0;
-  for (const m of state.matches)
-    if (m.finished && m.winner) wins[m.winner.id] = (wins[m.winner.id] || 0) + 1;
-  return state.robots
-    .map(r => ({
-      robotId: r.id,
-      robotName: r.name,
-      wins: wins[r.id] || 0
-    }))
-    .sort((a, b) => b.wins - a.wins || a.robotName.localeCompare(b.robotName));
-}
+/* ------------------ TIMERS ------------------ */
+let mainTick: NodeJS.Timeout | null = null;
+let recoveryTick: NodeJS.Timeout | null = null;
 
-function setMainStatus(s: MainStatus) {
-  state.mainStatus = s;
-  broadcast("UPDATE_STATE", { state });
-}
-
-function stopMainTick() {
+function stopAllTimers() {
   if (mainTick) clearInterval(mainTick);
-  mainTick = null;
-}
-function stopRecoveryTick() {
   if (recoveryTick) clearInterval(recoveryTick);
+  mainTick = null;
   recoveryTick = null;
 }
 
+function resetTimers() {
+  stopAllTimers();
+  state.mainTimer = 0;
+  state.recoveryTimer = 0;
+  state.mainStatus = "idle";
+  state.recoveryActive = false;
+}
+
+function setCurrentMatch(id: string | null) {
+  state.currentMatchId = id;
+  resetTimers();
+  state.mainStatus = "idle";
+  if (id) state.winner = null;
+  broadcast("UPDATE_STATE", { state });
+}
+
 function startMainTimer(seconds = 180) {
-  stopMainTick();
+  stopAllTimers();
   state.mainTimer = seconds;
-  setMainStatus("running");
+  state.mainStatus = "running";
+  broadcast("UPDATE_STATE", { state });
   mainTick = setInterval(() => {
     if (state.mainStatus !== "running") return;
     state.mainTimer = Math.max(0, state.mainTimer - 1);
     broadcast("UPDATE_STATE", { state });
-    if (state.mainTimer === 0) {
-      endMatchNow();
-    }
+    if (state.mainTimer === 0) endMatchNow();
   }, 1000);
 }
 
-function startRecovery(seconds = 10) {
-  stopRecoveryTick();
+function startRecoveryTimer(seconds = 10) {
   if (state.mainStatus === "running") {
-    stopMainTick();
     state.mainStatus = "paused";
+    if (mainTick) clearInterval(mainTick);
   }
-  state.recoveryTimer = seconds;
   state.recoveryActive = true;
+  state.recoveryTimer = seconds;
   broadcast("UPDATE_STATE", { state });
 
   recoveryTick = setInterval(() => {
     if (!state.recoveryActive) return;
     state.recoveryTimer = Math.max(0, state.recoveryTimer - 1);
     broadcast("UPDATE_STATE", { state });
+
     if (state.recoveryTimer === 0) {
-      stopRecoveryTick();
+      clearInterval(recoveryTick!);
       state.recoveryActive = false;
       if (state.mainTimer > 0) startMainTimer(state.mainTimer);
       else endMatchNow();
@@ -109,165 +106,302 @@ function startRecovery(seconds = 10) {
   }, 1000);
 }
 
-function endMatchNow(matchId?: string) {
-  stopMainTick();
-  stopRecoveryTick();
+function endMatchNow() {
+  stopAllTimers();
+  state.mainStatus = "finished";
   state.recoveryActive = false;
-  setMainStatus("finished");
   broadcast("UPDATE_STATE", { state });
 }
 
-function generateTournament() {
-  const shuffled = shuffle(state.robots);
-  const count = shuffled.length;
-  const roundsNeeded = Math.ceil(Math.log2(count));
-  const fullCount = 2 ** roundsNeeded;
-  while (shuffled.length < fullCount)
-    shuffled.push({ id: `bye-${shuffled.length}`, name: "BYE", team: "", image: "" });
+/* ------------------ CHAVEAMENTO DINÂMICO ------------------ */
 
-  const rounds: RoundName[] = ["quarter", "semi", "final"];
-  const firstRound = rounds[Math.max(0, rounds.length - roundsNeeded)];
-  const makePair = (a: Robot | null, b: Robot | null, round: RoundName): Match => ({
-    id: uuidv4(),
-    round,
-    robotA: a,
-    robotB: b,
-    scoreA: 0,
-    scoreB: 0,
-    winner: null,
-    finished: false
-  });
+// Divide robôs em grupos balanceados e evita grupos vazios ou de 1 robô
+function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup: number): Robot[][] {
+  const shuffled = shuffle(robots);
+  const groups: Robot[][] = Array.from({ length: groupCount }, () => []);
 
+  let gi = 0;
+  for (const r of shuffled) {
+    groups[gi].push(r);
+    gi = (gi + 1) % groupCount;
+  }
+
+  // Ajuste se algum grupo tiver 1 robô
+  const hasSingle = () => groups.some(g => g.length === 1);
+  while (hasSingle()) {
+    let largest = groups.reduce((a, b) => (a.length > b.length ? a : b));
+    let smallest = groups.find(g => g.length === 1);
+    if (!smallest || largest.length <= 2) break;
+    smallest.push(largest.pop()!);
+  }
+
+  return groups.filter(g => g.length > 0);
+}
+
+// Todos contra todos (sem repetição)
+function generateGroupMatches(groups: Robot[][]): Match[] {
   const matches: Match[] = [];
-  for (let i = 0; i < shuffled.length; i += 2)
-    matches.push(makePair(shuffled[i], shuffled[i + 1], firstRound));
-
-  state.matches = matches;
-  state.currentRound = firstRound;
-  state.currentMatchId = matches[0]?.id ?? null;
-  state.ranking = computeRanking();
-  broadcast("UPDATE_STATE", { state });
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi];
+    const label = String.fromCharCode(65 + gi); // A, B, C...
+    for (let i = 0; i < g.length; i++) {
+      for (let j = i + 1; j < g.length; j++) {
+        matches.push({
+          id: uuidv4(),
+          phase: "groups",
+          round: 1,
+          group: label,
+          robotA: g[i],
+          robotB: g[j],
+          scoreA: 0,
+          scoreB: 0,
+          winner: null,
+          finished: false
+        });
+      }
+    }
+  }
+  return matches;
 }
 
-function findMatch(id: string) {
-  return state.matches.find(m => m.id === id);
+/* ------------------ TABELAS ------------------ */
+function makeItem(r: Robot): GroupTableItem {
+  return { robotId: r.id, name: r.name, team: r.team, pts: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, gd: 0 };
 }
 
-function allFinishedIn(round: RoundName) {
-  return state.matches.filter(m => m.round === round).every(m => m.finished);
+function computeGroupTables(): Record<string, GroupTableItem[]> {
+  const tables: Record<string, Record<string, GroupTableItem>> = {};
+  const groupMatches = state.matches.filter(m => m.phase === "groups");
+  const groups = Array.from(new Set(groupMatches.map(m => m.group).filter(Boolean))) as string[];
+
+  for (const g of groups) tables[g] = {};
+
+  for (const m of groupMatches) {
+    const g = m.group as string;
+    const A = m.robotA?.id; const B = m.robotB?.id;
+    if (!A || !B) continue;
+
+    if (!tables[g][A]) tables[g][A] = makeItem(m.robotA!);
+    if (!tables[g][B]) tables[g][B] = makeItem(m.robotB!);
+    if (!m.finished) continue;
+
+    tables[g][A].gf += m.scoreA; tables[g][A].ga += m.scoreB;
+    tables[g][B].gf += m.scoreB; tables[g][B].ga += m.scoreA;
+
+    if (m.scoreA > m.scoreB) { tables[g][A].pts += 3; tables[g][A].wins++; tables[g][B].losses++; }
+    else if (m.scoreB > m.scoreA) { tables[g][B].pts += 3; tables[g][B].wins++; tables[g][A].losses++; }
+    else { tables[g][A].pts++; tables[g][B].pts++; tables[g][A].draws++; tables[g][B].draws++; }
+  }
+
+  const out: Record<string, GroupTableItem[]> = {};
+  for (const g of Object.keys(tables)) {
+    const arr = Object.values(tables[g]).map(x => ({ ...x, gd: x.gf - x.ga }));
+    arr.sort((a, b) =>
+      b.pts - a.pts || b.gd - a.gd || b.gf - a.gf || a.name.localeCompare(b.name)
+    );
+    out[g] = arr;
+  }
+  return out;
 }
 
-function nextRoundName(r: RoundName): RoundName | null {
-  if (r === "quarter") return "semi";
-  if (r === "semi") return "final";
-  return null;
-}
+/* ------------------ ELIMINATÓRIAS ------------------ */
+function generateEliminationFromGroups() {
+  const tables = computeGroupTables();
+  state.groupTables = tables;
+  const groupNames = Object.keys(tables).sort();
+  const advancePerGroup = (state as any).advancePerGroup || 2;
 
-function promoteWinners(from: RoundName) {
-  const winners = state.matches
-    .filter(m => m.round === from)
-    .map(m => m.winner)
-    .filter(Boolean) as Robot[];
+  const qualified: { group: string; robot: Robot }[] = [];
+  for (const g of groupNames) {
+    const top = tables[g].slice(0, advancePerGroup);
+    for (const t of top) {
+      const robot = state.robots.find(r => r.id === t.robotId);
+      if (robot) qualified.push({ group: g, robot });
+    }
+  }
 
-  const to = nextRoundName(from);
-  if (!to) return;
-  const nextMatches: Match[] = [];
-  for (let i = 0; i < winners.length; i += 2)
-    nextMatches.push({
+  const elimMatches: Match[] = [];
+  const half = Math.ceil(qualified.length / 2);
+  const left = qualified.slice(0, half);
+  const right = qualified.slice(half).reverse();
+
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    elimMatches.push({
       id: uuidv4(),
-      round: to,
-      robotA: winners[i] ?? null,
-      robotB: winners[i + 1] ?? null,
+      phase: "elimination",
+      round: 1,
+      group: null,
+      robotA: left[i].robot,
+      robotB: right[i].robot,
       scoreA: 0,
       scoreB: 0,
       winner: null,
       finished: false
     });
-  state.matches.push(...nextMatches);
-  state.currentRound = to;
-  state.currentMatchId = nextMatches[0]?.id ?? null;
-}
-
-function finalizeMatch(matchId: string, scoreA: number, scoreB: number) {
-  const m = findMatch(matchId);
-  if (!m) return;
-  m.scoreA = scoreA;
-  m.scoreB = scoreB;
-  m.finished = true;
-  if (m.scoreA > m.scoreB) m.winner = m.robotA;
-  else if (m.scoreB > m.scoreA) m.winner = m.robotB;
-  else m.winner = null;
-  state.winner = m.winner ?? null;
-
-  if (allFinishedIn(m.round)) {
-    const next = nextRoundName(m.round);
-    if (next) promoteWinners(m.round);
-    else {
-      state.currentRound = "final";
-      state.currentMatchId = null;
-    }
-  } else {
-    const nextMatch = state.matches
-      .filter(x => x.round === m.round)
-      .find(x => !x.finished);
-    state.currentMatchId = nextMatch?.id ?? state.currentMatchId;
   }
-  state.ranking = computeRanking();
+
+  // rounds seguintes
+  let curr = elimMatches.length;
+  let round = 1;
+  while (curr > 1) {
+    const nextCount = Math.ceil(curr / 2);
+    for (let i = 0; i < nextCount; i++) {
+      elimMatches.push({
+        id: uuidv4(),
+        phase: "elimination",
+        round: round + 1,
+        group: null,
+        robotA: null,
+        robotB: null,
+        scoreA: 0,
+        scoreB: 0,
+        winner: null,
+        finished: false
+      });
+    }
+    curr = nextCount;
+    round++;
+  }
+
+  state.matches.push(...elimMatches);
+  const first = state.matches.find(m => !m.finished);
+  setCurrentMatch(first?.id || null);
   broadcast("UPDATE_STATE", { state });
 }
 
-/* ----------- WEBSOCKET ----------- */
-wss.on("connection", (ws) => {
-  ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
-  ws.on("message", (raw) => {
-    try {
-      const { type, payload } = JSON.parse(String(raw));
-      switch (type) {
-        case "START_MATCH": startMainTimer(payload?.duration ?? 180); break;
-        case "PAUSE_MAIN": stopMainTick(); state.mainStatus = "paused"; break;
-        case "RESET_MAIN": stopMainTick(); state.mainTimer = payload?.seconds ?? 180; setMainStatus("idle"); break;
-        case "START_RECOVERY": startRecovery(payload?.seconds ?? 10); break;
-        case "STOP_RECOVERY": stopRecoveryTick(); state.recoveryActive = false; break;
-        case "END_MATCH": endMatchNow(payload?.matchId); break;
-      }
-    } catch {}
-  });
-});
+/* ------------------ FINALIZAÇÃO ------------------ */
+function finalizeMatch(id: string, scoreA: number, scoreB: number) {
+  const m = state.matches.find(mm => mm.id === id);
+  if (!m) return;
 
-/* ----------- REST ----------- */
+  m.finished = true;
+  m.scoreA = scoreA;
+  m.scoreB = scoreB;
+  if (m.robotA && m.robotB) {
+    if (scoreA > scoreB) m.winner = m.robotA;
+    else if (scoreB > scoreA) m.winner = m.robotB;
+  }
+
+  state.winner = m.winner;
+  state.lastWinner = m.winner;
+  state.groupTables = computeGroupTables();
+
+  if (m.phase === "groups") {
+    const allGroupsDone = state.matches.filter(x => x.phase === "groups").every(x => x.finished);
+    if (allGroupsDone) generateEliminationFromGroups();
+  } else {
+    const round = m.round;
+    const currentRound = state.matches.filter(x => x.phase === "elimination" && x.round === round);
+    if (currentRound.every(x => x.finished)) {
+      const winners = currentRound.map(x => x.winner).filter(Boolean) as Robot[];
+      const nextRound = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1);
+      for (let i = 0; i < winners.length; i++) {
+        const target = nextRound[Math.floor(i / 2)];
+        if (!target) continue;
+        if (i % 2 === 0) target.robotA = winners[i];
+        else target.robotB = winners[i];
+      }
+    }
+  }
+
+  const next = state.matches.find(x => !x.finished);
+  if (next) setCurrentMatch(next.id);
+  else {
+    state.currentMatchId = null;
+    state.mainStatus = "finished";
+  }
+  broadcast("UPDATE_STATE", { state });
+}
+
+/* ------------------ GERAÇÃO PRINCIPAL ------------------ */
+function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
+  const robots = [...state.robots];
+  if (robots.length < 2) {
+    state.matches = [];
+    state.groupTables = {};
+    state.currentMatchId = null;
+    broadcast("UPDATE_STATE", { state });
+    return;
+  }
+
+  let groups = divideGroupsDynamic(robots, groupCount, robotsPerGroup);
+  if (groups.length === 1) groups = [groups[0]];
+
+  const groupMatches = generateGroupMatches(groups);
+
+  state.matches = groupMatches;
+  state.lastWinner = null;
+  (state as any).advancePerGroup = advancePerGroup;
+  (state as any).groupCount = groups.length;
+  state.groupTables = computeGroupTables();
+  state.currentMatchId = groupMatches[0]?.id ?? null;
+  broadcast("UPDATE_STATE", { state });
+}
+
+/* ------------------ ENDPOINTS ------------------ */
 app.get("/state", (_req, res) => res.json({ state }));
+
 app.post("/robots", (req, res) => {
-  const { name, image, team } = req.body;
-  const robot: Robot = { id: uuidv4(), name, image, team };
+  const { name, team, image } = req.body;
+  const robot: Robot = { id: uuidv4(), name, team, image };
   state.robots.push(robot);
-  state.ranking = computeRanking();
   broadcast("UPDATE_STATE", { state });
   res.json(robot);
 });
-app.post("/matches/generate-tournament", (_req, res) => {
-  generateTournament();
-  res.json({ matches: state.matches });
-});
-app.post("/matches/:id/result", (req, res) => {
-  const { scoreA, scoreB } = req.body;
-  finalizeMatch(req.params.id, scoreA, scoreB);
+
+app.post("/matches/generate", (req, res) => {
+  let { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
+  const total = state.robots.length;
+  groupCount = Math.max(1, Math.min(groupCount, total));
+  robotsPerGroup = Math.max(2, robotsPerGroup);
+  advancePerGroup = Math.max(1, advancePerGroup);
+  generateTournament(groupCount, robotsPerGroup, advancePerGroup);
   res.json({ ok: true });
 });
+
+app.post("/matches/:id/result", (req, res) => {
+  const { scoreA, scoreB } = req.body;
+  finalizeMatch(req.params.id, Number(scoreA), Number(scoreB));
+  res.json({ ok: true });
+});
+
 app.post("/arena/reset", (_req, res) => {
+  stopAllTimers();
   state = {
     robots: [],
     matches: [],
-    currentRound: null,
     currentMatchId: null,
     mainTimer: 0,
     mainStatus: "idle",
     recoveryTimer: 0,
     recoveryActive: false,
     winner: null,
-    ranking: []
+    lastWinner: null,
+    ranking: [],
+    groupTables: {}
   };
   broadcast("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 
-server.listen(PORT, () => console.log(`✅ Backend rodando em ${PORT}`));
+/* ------------------ WEBSOCKET ------------------ */
+wss.on("connection", (ws) => {
+  ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
+  ws.on("message", (raw) => {
+    try {
+      const { type, payload } = JSON.parse(String(raw));
+      switch (type) {
+        case "START_MAIN": startMainTimer(payload?.seconds ?? 180); break;
+        case "PAUSE_MAIN": state.mainStatus = "paused"; break;
+        case "RESUME_MAIN": if (state.mainTimer > 0) startMainTimer(state.mainTimer); break;
+        case "RESET_MAIN": resetTimers(); broadcast("UPDATE_STATE", { state }); break;
+        case "START_RECOVERY": startRecoveryTimer(payload?.seconds ?? 10); break;
+        case "END_MATCH": endMatchNow(); break;
+      }
+    } catch {}
+  });
+});
+
+server.listen(PORT, () =>
+  console.log(`✅ Arena backend v6.1 (chaveamento dinâmico configurável) @${PORT}`)
+);
