@@ -4,20 +4,10 @@
 
 html, body, #root { height: 100%; }
 body { @apply bg-arena-bg text-white; font-family: ui-sans-serif, system-ui; }
-.btn {
-  @apply px-4 py-2 rounded-xl bg-arena-card hover:opacity-90 transition;
-}
+.btn { @apply px-4 py-2 rounded-xl bg-arena-card hover:opacity-90 transition; }
 .btn-accent { @apply bg-arena-accent text-black font-bold; }
 .btn-danger { @apply bg-arena-danger text-white; }
-.card {
-  @apply bg-arena-card/80 border border-white/10 rounded-2xl p-4 shadow-lg;
-}
-.heading {
-  @apply text-2xl font-bold tracking-wide;
-}
-.sub {
-  @apply text-sm text-white/60;
-}
-.timer {
-  @apply text-6xl md:text-7xl font-extrabold tracking-widest;
-}
+.card { @apply bg-arena-card/80 border border-white/10 rounded-2xl p-4 shadow-lg; }
+.heading { @apply text-2xl font-bold tracking-wide; }
+.sub { @apply text-sm text-white/60; }
+.timer { @apply text-6xl md:text-7xl font-extrabold tracking-widest; }

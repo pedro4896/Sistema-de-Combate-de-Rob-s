@@ -1,17 +1,20 @@
 export interface Robot {
   id: string;
   name: string;
+  team: string;       // 🆕 nome da equipe
   image?: string;
 }
 
+export type RoundName = "quarter" | "semi" | "final";
+
 export interface Match {
   id: string;
-  round: number;
+  round: RoundName;
   robotA: Robot | null;
   robotB: Robot | null;
   scoreA: number;
   scoreB: number;
-  winner: string | null; // robot id
+  winner: Robot | null;
   finished: boolean;
 }
 
@@ -21,15 +24,17 @@ export interface RankingItem {
   wins: number;
 }
 
-export type ArenaStatus = "idle" | "ready" | "running" | "paused" | "recovery" | "finished";
+export type MainStatus = "idle" | "running" | "paused" | "finished";
 
 export interface ArenaState {
   robots: Robot[];
   matches: Match[];
+  currentRound: RoundName | null;
   currentMatchId: string | null;
-  timer: number;           // main timer (sec)
-  recoveryTimer: number;   // secondary 10s
-  status: ArenaStatus;
-  winner: string | null;   // robot id
+  mainTimer: number;
+  mainStatus: MainStatus;
+  recoveryTimer: number;
+  recoveryActive: boolean;
+  winner: Robot | null;
   ranking: RankingItem[];
 }

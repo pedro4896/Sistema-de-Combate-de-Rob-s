@@ -1,76 +1,57 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { onMessage, send } from "../ws";
-import { Play, Pause, RotateCcw, AlarmClock, TimerReset } from "lucide-react";
+import { Play, Pause, RotateCcw, AlarmClock, OctagonX } from "lucide-react";
 
 export default function Judge() {
   const [state, setState] = useState<any>(null);
+  const refresh = (s:any)=> setState(s);
+  useEffect(()=>{ api("/state").then(r=>refresh(r.state)); return onMessage(m=>m.type==="UPDATE_STATE"&&refresh(m.payload.state)); },[]);
 
-  function refresh(s:any){ setState(s); }
-  useEffect(() => {
-    api("/state").then(r => refresh(r.state));
-    return onMessage(msg => msg.type==="UPDATE_STATE" && refresh(msg.payload.state));
-  }, []);
+  const current = useMemo(()=> state?.matches.find((m:any)=>m.id===state.currentMatchId), [state]);
+  if(!state) return <p className="sub">Carregando...</p>;
 
-  if (!state) return <p className="sub">Carregando...</p>;
-  const current = state.matches.find((m:any)=>m.id===state.currentMatchId);
-
-  function start(id:string){ send("START_MATCH", { matchId:id, duration:180 }); }
-  function pause(){ send("PAUSE"); }
-  function resume(){ send("RESUME"); }
-  function recovery(){ send("START_RECOVERY", { seconds: 10 }); }
-
-  const mm = String(Math.floor(state.timer/60)).padStart(2,"0");
-  const ss = String(state.timer%60).padStart(2,"0");
-  const rec = state.recoveryTimer;
+  const a = current?.robotA, b = current?.robotB;
+  const mm = String(Math.floor((state.mainTimer||0)/60)).padStart(2,"0");
+  const ss = String((state.mainTimer||0)%60).padStart(2,"0");
+  const rec = state.recoveryActive ? state.recoveryTimer : 0;
 
   return (
     <div className="space-y-6">
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* card robô A */}
+        <div className="card">
+          <div className="heading mb-2">{a?.name ?? "—"}</div>
+          <div className="aspect-video bg-black/40 rounded-xl overflow-hidden flex items-center justify-center mb-2">
+            {a?.image ? <img src={a.image} className="w-full h-full object-cover"/> : <span className="sub">Sem imagem</span>}
+          </div>
+          <div className="sub">Score: {current?.scoreA ?? 0}</div>
+        </div>
+        {/* card robô B */}
+        <div className="card">
+          <div className="heading mb-2 text-right">{b?.name ?? "—"}</div>
+          <div className="aspect-video bg-black/40 rounded-xl overflow-hidden flex items-center justify-center mb-2">
+            {b?.image ? <img src={b.image} className="w-full h-full object-cover"/> : <span className="sub">Sem imagem</span>}
+          </div>
+          <div className="sub text-right">Score: {current?.scoreB ?? 0}</div>
+        </div>
+      </div>
+
+      {/* Timers */}
       <div className="card text-center">
         <div className="sub uppercase">Timer principal</div>
-        <div className="timer">
-          {mm}:{ss}
-        </div>
-        {state.status==="recovery" && (
-          <div className="mt-2 text-xl">
-            Recuperação: <span className="font-extrabold text-arena-danger">{rec}s</span>
-          </div>
-        )}
+        <div className="timer">{mm}:{ss}</div>
+        {state.recoveryActive && <div className="mt-1 text-xl">Recuperação: <span className="font-black text-arena-danger">{rec}s</span></div>}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          <button className="btn btn-accent flex items-center gap-2" onClick={()=>current && start(current.id)}>
-            <Play size={16}/> Iniciar
-          </button>
-          <button className="btn flex items-center gap-2" onClick={pause}><Pause size={16}/> Pausar</button>
-          <button className="btn flex items-center gap-2" onClick={resume}><RotateCcw size={16}/> Retomar</button>
-          <button className="btn btn-danger flex items-center gap-2" onClick={recovery}>
-            <AlarmClock size={16}/> Recuperação (10s)
-          </button>
+          <button className="btn btn-accent flex items-center gap-2" onClick={()=> current && send("START_MATCH",{matchId:current.id,duration:180})}><Play size={16}/> Iniciar</button>
+          <button className="btn flex items-center gap-2" onClick={()=>send("PAUSE_MAIN")}><Pause size={16}/> Pausar</button>
+          <button className="btn flex items-center gap-2" onClick={()=>send("RESUME_MAIN")}><RotateCcw size={16}/> Retomar</button>
+          <button className="btn flex items-center gap-2" onClick={()=>send("RESET_MAIN",{seconds:180})}><RotateCcw size={16}/> Resetar Timer</button>
+          <button className="btn btn-danger flex items-center gap-2" onClick={()=>send("START_RECOVERY",{seconds:10})}><AlarmClock size={16}/> 10s</button>
+          <button className="btn flex items-center gap-2" onClick={()=>send("STOP_RECOVERY")}><AlarmClock size={16}/> Parar 10s</button>
+          <button className="btn btn-danger flex items-center gap-2" onClick={()=>send("END_MATCH",{matchId:state.currentMatchId})}><OctagonX size={16}/> Encerrar Luta</button>
         </div>
-        <div className="mt-2 sub">Status: {state.status}</div>
-      </div>
-
-      <div className="card">
-        <div className="heading mb-3">Lutas</div>
-        <div className="grid md:grid-cols-2 gap-3">
-          {state.matches.map((m:any)=>(
-            <div key={m.id} className={`p-4 rounded-2xl border ${state.currentMatchId===m.id?"border-arena-accent":"border-white/10"} bg-white/5`}>
-              <div className="flex items-center justify-between">
-                <div className="font-bold">{m.robotA?.name ?? "—"}</div>
-                <div className="text-arena-accent font-black">VS</div>
-                <div className="font-bold">{m.robotB?.name ?? "—"}</div>
-              </div>
-              <div className="mt-2 sub">Score: {m.scoreA} — {m.scoreB}</div>
-              <div className="mt-2 flex gap-2">
-                {!m.finished && <button className="btn btn-accent" onClick={()=>send("START_MATCH",{matchId:m.id})}>Selecionar & Iniciar</button>}
-                {m.finished && <span className="sub">🏆 {m.winner ? m.winner.slice(0,8) : "Empate"}</span>}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 sub">
-        <TimerReset size={16}/> Ao encerrar no Scores a próxima luta é selecionada automaticamente.
+        <div className="mt-2 sub">Status: {state.mainStatus} {state.recoveryActive ? " | recovery" : ""}</div>
       </div>
     </div>
   );
