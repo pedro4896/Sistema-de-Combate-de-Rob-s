@@ -1,124 +1,228 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
-import { Trophy, Save } from "lucide-react";
+import { Bot } from "lucide-react"; // ícone fallback
+
+interface Robot {
+  id: string;
+  name: string;
+  team?: string;
+  image?: string;
+}
 
 export default function Scores() {
   const [state, setState] = useState<any>(null);
-  const [scoreA, setScoreA] = useState<number>(0);
-  const [scoreB, setScoreB] = useState<number>(0);
-  const [saved, setSaved] = useState(false);
+  const [match, setMatch] = useState<any>(null);
+  const [judges, setJudges] = useState([
+    { judgeId: "J1", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
+    { judgeId: "J2", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
+    { judgeId: "J3", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
+  ]);
 
   useEffect(() => {
-    api("/state").then((r) => setState(r.state));
-    return onMessage((m) => m.type === "UPDATE_STATE" && setState(m.payload.state));
+    // Busca estado inicial
+    api("/state").then((r) => {
+      setState(r.state);
+      const current = r.state.matches.find(
+        (m: any) => m.id === r.state.currentMatchId
+      );
+      setMatch(current);
+    });
+
+    // Atualiza automaticamente via WebSocket
+    return onMessage((m) => {
+      if (m.type === "UPDATE_STATE") {
+        setState(m.payload.state);
+        const current = m.payload.state.matches.find(
+          (mm: any) => mm.id === m.payload.state.currentMatchId
+        );
+        setMatch(current);
+      }
+    });
   }, []);
 
-  const current = useMemo(() => {
-    if (!state) return null;
-    return (
-      state.matches.find((m: any) => m.id === state.currentMatchId) ??
-      state.matches.find((m: any) => !m.finished) ??
-      state.matches[state.matches.length - 1]
-    );
-  }, [state]);
+  const update = (ji: number, field: string, val: number) => {
+    const copy = [...judges];
+    (copy[ji] as any)[field] = val;
+    setJudges(copy);
+  };
 
-  if (!state) return <p className="sub">Carregando dados...</p>;
-  if (!current) return <p className="sub">Nenhuma luta ativa.</p>;
-
-  const a = current.robotA;
-  const b = current.robotB;
-  const winner =
-    scoreA > scoreB ? a : scoreB > scoreA ? b : null;
-
-  async function saveResult() {
-    if (!current) return;
-    await api(`/matches/${current.id}/result`, {
+  const submit = async () => {
+    if (!match) return alert("❌ Nenhuma luta ativa!");
+    await api(`/matches/${match.id}/judges`, {
       method: "POST",
-      body: JSON.stringify({ scoreA, scoreB }),
+      body: JSON.stringify({ judges }),
     });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    alert("✅ Pontuação enviada com sucesso!");
+  };
+
+  if (!match) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#000814] text-white">
+        <h2 className="text-2xl font-bold mb-4">Nenhuma luta em andamento</h2>
+        <p className="text-white/60">
+          Aguarde o juiz iniciar uma partida para liberar a tela de pontuação.
+        </p>
+      </div>
+    );
   }
 
+  const robotA: Robot = match.robotA;
+  const robotB: Robot = match.robotB;
+
+  const renderRobotImage = (robot: Robot, color: string) => {
+    if (robot?.image)
+      return (
+        <img
+          src={robot.image}
+          alt={robot.name}
+          className={`w-32 h-32 object-cover rounded-full border-4 border-${color}-400 shadow-lg mb-3`}
+        />
+      );
+
+    // Fallback bonito se o robô não tiver imagem
+    return (
+      <div
+        className={`w-32 h-32 flex items-center justify-center rounded-full border-4 border-${color}-400 bg-${color}-950/40 shadow-inner mb-3`}
+      >
+        <Bot size={48} className={`text-${color}-300`} />
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="heading flex items-center gap-2">
-          <Trophy /> Atribuir Pontuação
-        </h2>
-        {saved && (
-          <span className="text-arena-accent text-sm font-bold">
-            ✅ Resultado salvo!
-          </span>
-        )}
-      </div>
+    <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center p-10">
+      <h1 className="text-3xl font-extrabold text-center mb-10">
+        Avaliação dos Jurados — Round {match.round}
+      </h1>
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <div
-          className={`card text-center ${
-            winner?.id === a?.id ? "border-arena-accent shadow-[0_0_20px_#00FF9C50]" : ""
-          }`}
-        >
-          <div className="heading mb-2">{a?.name ?? "—"}</div>
-          <div className="sub mb-2">Equipe: {a?.team ?? "—"}</div>
-          {a?.image && (
-            <img
-              src={a.image}
-              className="mx-auto mb-2 max-h-48 rounded-xl object-cover"
-            />
-          )}
-          <input
-            type="number"
-            value={scoreA}
-            onChange={(e) => setScoreA(Number(e.target.value))}
-            className="text-4xl font-bold text-center w-24 mx-auto bg-white/10 rounded-xl p-2"
-          />
+      {/* ======= PAINÉIS DOS ROBÔS ======= */}
+      <div className="grid md:grid-cols-2 gap-10 w-full max-w-6xl">
+
+        {/* -------- ROBÔ AZUL -------- */}
+        <div className="bg-gradient-to-b from-blue-900/90 to-blue-700/50 rounded-2xl p-6 shadow-2xl border border-blue-400/30">
+          <div className="flex flex-col items-center mb-6">
+            {renderRobotImage(robotA, "blue")}
+            <h2 className="text-2xl font-bold text-blue-300">
+              {robotA?.name ?? "Robô Azul"}
+            </h2>
+            {robotA?.team && (
+              <p className="text-sm text-white/70 mt-1">{robotA.team}</p>
+            )}
+          </div>
+
+          <h3 className="text-lg font-bold text-center mb-4 text-yellow-400">
+            🧩 Notas dos Jurados
+          </h3>
+
+          <table className="w-full text-center border-collapse mb-6">
+            <thead className="bg-white/10 text-yellow-400">
+              <tr>
+                <th className="py-2">Jurado</th>
+                <th>Dano (0–6)</th>
+                <th>Agressividade (0–5)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {judges.map((j, i) => (
+                <tr key={j.judgeId} className="border-b border-white/10">
+                  <td className="font-semibold text-white py-2">{j.judgeId}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      max="6"
+                      value={j.damageA}
+                      onChange={(e) =>
+                        update(i, "damageA", Number(e.target.value))
+                      }
+                      className="w-16 text-center bg-blue-950/40 border border-blue-300/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      max="5"
+                      value={j.hitsA}
+                      onChange={(e) =>
+                        update(i, "hitsA", Number(e.target.value))
+                      }
+                      className="w-16 text-center bg-blue-950/40 border border-blue-300/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        <div
-          className={`card text-center ${
-            winner?.id === b?.id ? "border-arena-accent shadow-[0_0_20px_#00FF9C50]" : ""
-          }`}
-        >
-          <div className="heading mb-2">{b?.name ?? "—"}</div>
-          <div className="sub mb-2">Equipe: {b?.team ?? "—"}</div>
-          {b?.image && (
-            <img
-              src={b.image}
-              className="mx-auto mb-2 max-h-48 rounded-xl object-cover"
-            />
-          )}
-          <input
-            type="number"
-            value={scoreB}
-            onChange={(e) => setScoreB(Number(e.target.value))}
-            className="text-4xl font-bold text-center w-24 mx-auto bg-white/10 rounded-xl p-2"
-          />
+        {/* -------- ROBÔ VERDE -------- */}
+        <div className="bg-gradient-to-b from-green-900/90 to-green-700/50 rounded-2xl p-6 shadow-2xl border border-green-400/30">
+          <div className="flex flex-col items-center mb-6">
+            {renderRobotImage(robotB, "green")}
+            <h2 className="text-2xl font-bold text-green-300">
+              {robotB?.name ?? "Robô Verde"}
+            </h2>
+            {robotB?.team && (
+              <p className="text-sm text-white/70 mt-1">{robotB.team}</p>
+            )}
+          </div>
+
+          <h3 className="text-lg font-bold text-center mb-4 text-yellow-400">
+            🧩 Notas dos Jurados
+          </h3>
+
+          <table className="w-full text-center border-collapse mb-6">
+            <thead className="bg-white/10 text-yellow-400">
+              <tr>
+                <th className="py-2">Jurado</th>
+                <th>Dano (0–6)</th>
+                <th>Agressividade (0–5)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {judges.map((j, i) => (
+                <tr key={j.judgeId} className="border-b border-white/10">
+                  <td className="font-semibold text-white py-2">{j.judgeId}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      max="6"
+                      value={j.damageB}
+                      onChange={(e) =>
+                        update(i, "damageB", Number(e.target.value))
+                      }
+                      className="w-16 text-center bg-green-950/40 border border-green-300/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      max="5"
+                      value={j.hitsB}
+                      onChange={(e) =>
+                        update(i, "hitsB", Number(e.target.value))
+                      }
+                      className="w-16 text-center bg-green-950/40 border border-green-300/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div className="flex justify-center mt-6">
-        <button
-          className="btn btn-accent flex items-center gap-2"
-          onClick={saveResult}
-          disabled={!a || !b}
-        >
-          <Save size={16} /> Salvar Resultado
-        </button>
-      </div>
-
-      {winner && (
-        <div className="text-center mt-6 text-2xl font-bold text-arena-accent animate-pulse">
-          🏆 {winner.name} venceu esta luta!
-        </div>
-      )}
-
-      <div className="mt-8 sub text-center">
-        Ao salvar, o sistema avança automaticamente para o próximo confronto
-        (se houver) e o telão será atualizado com os novos robôs e timers
-        reiniciados.
-      </div>
+      {/* -------- BOTÃO ENVIAR -------- */}
+      <button
+        onClick={submit}
+        className="mt-12 bg-yellow-400 text-black font-extrabold px-12 py-4 rounded-2xl text-lg hover:opacity-90 shadow-lg transition"
+      >
+        Enviar Pontuação
+      </button>
     </div>
   );
 }

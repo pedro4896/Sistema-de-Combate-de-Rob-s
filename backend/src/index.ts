@@ -3,7 +3,52 @@ import cors from "cors";
 import { createServer } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
-import { ArenaState, Robot, Match, GroupTableItem } from "./types";
+
+/* -------------------- Tipos -------------------- */
+interface Robot {
+  id: string;
+  name: string;
+  team?: string;
+  image?: string;
+}
+
+interface ScoreDetail {
+  judgeId: string;
+  damageA: number;
+  damageB: number;
+  hitsA: number;
+  hitsB: number;
+}
+
+interface Match {
+  id: string;
+  phase: "groups" | "elimination";
+  round: number;
+  group: string | null;
+  robotA: Robot | null;
+  robotB: Robot | null;
+  scoreA: number;
+  scoreB: number;
+  winner: Robot | null;
+  finished: boolean;
+  judges?: ScoreDetail[];
+}
+
+interface ArenaState {
+  robots: Robot[];
+  matches: Match[];
+  currentMatchId: string | null;
+  mainTimer: number;
+  recoveryTimer: number;
+  mainStatus: "idle" | "running" | "paused" | "finished";
+  recoveryActive: boolean;
+  winner: Robot | null;
+  lastWinner: Robot | null;
+  ranking: any[];
+  groupTables: Record<string, any>;
+  groupCount?: number;
+  advancePerGroup?: number;
+}
 
 const app = express();
 app.use(cors());
@@ -12,14 +57,14 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = Number(process.env.PORT || 8080);
 
-/* ------------------ ESTADO GLOBAL ------------------ */
+/* -------------------- Estado Global -------------------- */
 let state: ArenaState = {
   robots: [],
   matches: [],
   currentMatchId: null,
   mainTimer: 0,
-  mainStatus: "idle",
   recoveryTimer: 0,
+  mainStatus: "idle",
   recoveryActive: false,
   winner: null,
   lastWinner: null,
@@ -27,7 +72,7 @@ let state: ArenaState = {
   groupTables: {}
 };
 
-/* ------------------ UTILITÁRIOS ------------------ */
+/* -------------------- Utilitários -------------------- */
 function broadcast(type: string, payload: any) {
   const msg = JSON.stringify({ type, payload });
   for (const c of wss.clients)
@@ -43,7 +88,7 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-/* ------------------ TIMERS ------------------ */
+/* -------------------- Timers -------------------- */
 let mainTick: NodeJS.Timeout | null = null;
 let recoveryTick: NodeJS.Timeout | null = null;
 
@@ -113,9 +158,7 @@ function endMatchNow() {
   broadcast("UPDATE_STATE", { state });
 }
 
-/* ------------------ CHAVEAMENTO DINÂMICO ------------------ */
-
-// Divide robôs em grupos balanceados e evita grupos vazios ou de 1 robô
+/* -------------------- Chaveamento Dinâmico -------------------- */
 function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup: number): Robot[][] {
   const shuffled = shuffle(robots);
   const groups: Robot[][] = Array.from({ length: groupCount }, () => []);
@@ -126,7 +169,6 @@ function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup
     gi = (gi + 1) % groupCount;
   }
 
-  // Ajuste se algum grupo tiver 1 robô
   const hasSingle = () => groups.some(g => g.length === 1);
   while (hasSingle()) {
     let largest = groups.reduce((a, b) => (a.length > b.length ? a : b));
@@ -138,39 +180,69 @@ function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup
   return groups.filter(g => g.length > 0);
 }
 
-// Todos contra todos (sem repetição)
+/* ---- ROUND-ROBIN BALANCEADO ---- */
 function generateGroupMatches(groups: Robot[][]): Match[] {
   const matches: Match[] = [];
+
   for (let gi = 0; gi < groups.length; gi++) {
-    const g = groups[gi];
-    const label = String.fromCharCode(65 + gi); // A, B, C...
-    for (let i = 0; i < g.length; i++) {
-      for (let j = i + 1; j < g.length; j++) {
+    const group = [...groups[gi]];
+    const label = String.fromCharCode(65 + gi);
+
+    if (group.length % 2 !== 0)
+      group.push({ id: "bye", name: "Folga" } as Robot);
+
+    const totalRounds = group.length - 1;
+    const half = group.length / 2;
+
+    for (let round = 0; round < totalRounds; round++) {
+      const rodada: [Robot, Robot][] = [];
+      for (let i = 0; i < half; i++) {
+        const a = group[i];
+        const b = group[group.length - 1 - i];
+        if (a.id !== "bye" && b.id !== "bye") rodada.push([a, b]);
+      }
+
+      for (const [A, B] of rodada) {
         matches.push({
           id: uuidv4(),
           phase: "groups",
-          round: 1,
+          round: round + 1,
           group: label,
-          robotA: g[i],
-          robotB: g[j],
+          robotA: A,
+          robotB: B,
           scoreA: 0,
           scoreB: 0,
           winner: null,
           finished: false
         });
       }
+
+      const fixed = group[0];
+      const rest = group.slice(1);
+      rest.unshift(rest.pop()!);
+      group.splice(0, group.length, fixed, ...rest);
     }
   }
+
   return matches;
 }
 
-/* ------------------ TABELAS ------------------ */
-function makeItem(r: Robot): GroupTableItem {
-  return { robotId: r.id, name: r.name, team: r.team, pts: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, gd: 0 };
+/* -------------------- Pontuação dos Jurados -------------------- */
+function calculateWinnerFromJudges(judges: ScoreDetail[]): { totalA: number; totalB: number; winner: "A" | "B" | null } {
+  let totalA = 0;
+  let totalB = 0;
+  for (const j of judges) {
+    totalA += j.damageA + j.hitsA;
+    totalB += j.damageB + j.hitsB;
+  }
+  if (totalA > totalB) return { totalA, totalB, winner: "A" };
+  if (totalB > totalA) return { totalA, totalB, winner: "B" };
+  return { totalA, totalB, winner: null };
 }
 
-function computeGroupTables(): Record<string, GroupTableItem[]> {
-  const tables: Record<string, Record<string, GroupTableItem>> = {};
+/* -------------------- Funções Auxiliares -------------------- */
+function computeGroupTables() {
+  const tables: Record<string, any> = {};
   const groupMatches = state.matches.filter(m => m.phase === "groups");
   const groups = Array.from(new Set(groupMatches.map(m => m.group).filter(Boolean))) as string[];
 
@@ -178,167 +250,54 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
 
   for (const m of groupMatches) {
     const g = m.group as string;
-    const A = m.robotA?.id; const B = m.robotB?.id;
-    if (!A || !B) continue;
+    if (!m.robotA || !m.robotB) continue;
+    const A = m.robotA.id;
+    const B = m.robotB.id;
 
-    if (!tables[g][A]) tables[g][A] = makeItem(m.robotA!);
-    if (!tables[g][B]) tables[g][B] = makeItem(m.robotB!);
+    if (!tables[g][A])
+      tables[g][A] = { robotId: A, name: m.robotA.name, pts: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, gd: 0 };
+    if (!tables[g][B])
+      tables[g][B] = { robotId: B, name: m.robotB.name, pts: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, gd: 0 };
+
     if (!m.finished) continue;
-
     tables[g][A].gf += m.scoreA; tables[g][A].ga += m.scoreB;
     tables[g][B].gf += m.scoreB; tables[g][B].ga += m.scoreA;
 
-    if (m.scoreA > m.scoreB) { tables[g][A].pts += 3; tables[g][A].wins++; tables[g][B].losses++; }
-    else if (m.scoreB > m.scoreA) { tables[g][B].pts += 3; tables[g][B].wins++; tables[g][A].losses++; }
-    else { tables[g][A].pts++; tables[g][B].pts++; tables[g][A].draws++; tables[g][B].draws++; }
+    if (m.scoreA > m.scoreB) {
+      tables[g][A].pts += 3; tables[g][A].wins++; tables[g][B].losses++;
+    } else if (m.scoreB > m.scoreA) {
+      tables[g][B].pts += 3; tables[g][B].wins++; tables[g][A].losses++;
+    } else {
+      tables[g][A].pts++; tables[g][B].pts++; tables[g][A].draws++; tables[g][B].draws++;
+    }
   }
 
-  const out: Record<string, GroupTableItem[]> = {};
-  for (const g of Object.keys(tables)) {
-    const arr = Object.values(tables[g]).map(x => ({ ...x, gd: x.gf - x.ga }));
-    arr.sort((a, b) =>
-      b.pts - a.pts || b.gd - a.gd || b.gf - a.gf || a.name.localeCompare(b.name)
+  const result: Record<string, any[]> = {};
+  for (const g of groups) {
+    result[g] = Object.values(tables[g]).sort((a: any, b: any) =>
+      b.pts - a.pts || b.gf - a.gf || b.ga - a.ga
     );
-    out[g] = arr;
   }
-  return out;
+  return result;
 }
 
-/* ------------------ ELIMINATÓRIAS ------------------ */
-function generateEliminationFromGroups() {
-  const tables = computeGroupTables();
-  state.groupTables = tables;
-  const groupNames = Object.keys(tables).sort();
-  const advancePerGroup = (state as any).advancePerGroup || 2;
-
-  const qualified: { group: string; robot: Robot }[] = [];
-  for (const g of groupNames) {
-    const top = tables[g].slice(0, advancePerGroup);
-    for (const t of top) {
-      const robot = state.robots.find(r => r.id === t.robotId);
-      if (robot) qualified.push({ group: g, robot });
-    }
-  }
-
-  const elimMatches: Match[] = [];
-  const half = Math.ceil(qualified.length / 2);
-  const left = qualified.slice(0, half);
-  const right = qualified.slice(half).reverse();
-
-  for (let i = 0; i < Math.min(left.length, right.length); i++) {
-    elimMatches.push({
-      id: uuidv4(),
-      phase: "elimination",
-      round: 1,
-      group: null,
-      robotA: left[i].robot,
-      robotB: right[i].robot,
-      scoreA: 0,
-      scoreB: 0,
-      winner: null,
-      finished: false
-    });
-  }
-
-  // rounds seguintes
-  let curr = elimMatches.length;
-  let round = 1;
-  while (curr > 1) {
-    const nextCount = Math.ceil(curr / 2);
-    for (let i = 0; i < nextCount; i++) {
-      elimMatches.push({
-        id: uuidv4(),
-        phase: "elimination",
-        round: round + 1,
-        group: null,
-        robotA: null,
-        robotB: null,
-        scoreA: 0,
-        scoreB: 0,
-        winner: null,
-        finished: false
-      });
-    }
-    curr = nextCount;
-    round++;
-  }
-
-  state.matches.push(...elimMatches);
-  const first = state.matches.find(m => !m.finished);
-  setCurrentMatch(first?.id || null);
-  broadcast("UPDATE_STATE", { state });
-}
-
-/* ------------------ FINALIZAÇÃO ------------------ */
-function finalizeMatch(id: string, scoreA: number, scoreB: number) {
-  const m = state.matches.find(mm => mm.id === id);
-  if (!m) return;
-
-  m.finished = true;
-  m.scoreA = scoreA;
-  m.scoreB = scoreB;
-  if (m.robotA && m.robotB) {
-    if (scoreA > scoreB) m.winner = m.robotA;
-    else if (scoreB > scoreA) m.winner = m.robotB;
-  }
-
-  state.winner = m.winner;
-  state.lastWinner = m.winner;
-  state.groupTables = computeGroupTables();
-
-  if (m.phase === "groups") {
-    const allGroupsDone = state.matches.filter(x => x.phase === "groups").every(x => x.finished);
-    if (allGroupsDone) generateEliminationFromGroups();
-  } else {
-    const round = m.round;
-    const currentRound = state.matches.filter(x => x.phase === "elimination" && x.round === round);
-    if (currentRound.every(x => x.finished)) {
-      const winners = currentRound.map(x => x.winner).filter(Boolean) as Robot[];
-      const nextRound = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1);
-      for (let i = 0; i < winners.length; i++) {
-        const target = nextRound[Math.floor(i / 2)];
-        if (!target) continue;
-        if (i % 2 === 0) target.robotA = winners[i];
-        else target.robotB = winners[i];
-      }
-    }
-  }
-
-  const next = state.matches.find(x => !x.finished);
-  if (next) setCurrentMatch(next.id);
-  else {
-    state.currentMatchId = null;
-    state.mainStatus = "finished";
-  }
-  broadcast("UPDATE_STATE", { state });
-}
-
-/* ------------------ GERAÇÃO PRINCIPAL ------------------ */
+/* -------------------- Geração principal -------------------- */
 function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
   const robots = [...state.robots];
-  if (robots.length < 2) {
-    state.matches = [];
-    state.groupTables = {};
-    state.currentMatchId = null;
-    broadcast("UPDATE_STATE", { state });
-    return;
-  }
+  if (robots.length < 2) return;
 
   let groups = divideGroupsDynamic(robots, groupCount, robotsPerGroup);
-  if (groups.length === 1) groups = [groups[0]];
-
   const groupMatches = generateGroupMatches(groups);
 
   state.matches = groupMatches;
-  state.lastWinner = null;
-  (state as any).advancePerGroup = advancePerGroup;
-  (state as any).groupCount = groups.length;
   state.groupTables = computeGroupTables();
+  state.groupCount = groupCount;
+  state.advancePerGroup = advancePerGroup;
   state.currentMatchId = groupMatches[0]?.id ?? null;
   broadcast("UPDATE_STATE", { state });
 }
 
-/* ------------------ ENDPOINTS ------------------ */
+/* -------------------- ENDPOINTS -------------------- */
 app.get("/state", (_req, res) => res.json({ state }));
 
 app.post("/robots", (req, res) => {
@@ -350,19 +309,25 @@ app.post("/robots", (req, res) => {
 });
 
 app.post("/matches/generate", (req, res) => {
-  let { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
-  const total = state.robots.length;
-  groupCount = Math.max(1, Math.min(groupCount, total));
-  robotsPerGroup = Math.max(2, robotsPerGroup);
-  advancePerGroup = Math.max(1, advancePerGroup);
+  const { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
   generateTournament(groupCount, robotsPerGroup, advancePerGroup);
   res.json({ ok: true });
 });
 
-app.post("/matches/:id/result", (req, res) => {
-  const { scoreA, scoreB } = req.body;
-  finalizeMatch(req.params.id, Number(scoreA), Number(scoreB));
-  res.json({ ok: true });
+app.post("/matches/:id/judges", (req, res) => {
+  const { judges } = req.body;
+  const match = state.matches.find(m => m.id === req.params.id);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+
+  match.judges = judges;
+  const result = calculateWinnerFromJudges(judges);
+  match.scoreA = result.totalA;
+  match.scoreB = result.totalB;
+  match.winner = result.winner === "A" ? match.robotA : match.robotB;
+  match.finished = true;
+  state.groupTables = computeGroupTables();
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true, result });
 });
 
 app.post("/arena/reset", (_req, res) => {
@@ -372,8 +337,8 @@ app.post("/arena/reset", (_req, res) => {
     matches: [],
     currentMatchId: null,
     mainTimer: 0,
-    mainStatus: "idle",
     recoveryTimer: 0,
+    mainStatus: "idle",
     recoveryActive: false,
     winner: null,
     lastWinner: null,
@@ -384,7 +349,7 @@ app.post("/arena/reset", (_req, res) => {
   res.json({ ok: true });
 });
 
-/* ------------------ WEBSOCKET ------------------ */
+/* -------------------- WEBSOCKET -------------------- */
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
   ws.on("message", (raw) => {
@@ -393,7 +358,7 @@ wss.on("connection", (ws) => {
       switch (type) {
         case "START_MAIN": startMainTimer(payload?.seconds ?? 180); break;
         case "PAUSE_MAIN": state.mainStatus = "paused"; break;
-        case "RESUME_MAIN": if (state.mainTimer > 0) startMainTimer(state.mainTimer); break;
+        case "RESUME_MAIN": startMainTimer(state.mainTimer); break;
         case "RESET_MAIN": resetTimers(); broadcast("UPDATE_STATE", { state }); break;
         case "START_RECOVERY": startRecoveryTimer(payload?.seconds ?? 10); break;
         case "END_MATCH": endMatchNow(); break;
@@ -403,5 +368,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, () =>
-  console.log(`✅ Arena backend v6.1 (chaveamento dinâmico configurável) @${PORT}`)
+  console.log(`✅ Arena Backend v7.0 (Chaveamento + Pontuação Jurados) @${PORT}`)
 );

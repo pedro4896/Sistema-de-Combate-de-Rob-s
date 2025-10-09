@@ -18,15 +18,33 @@ interface GroupTableItem {
 
 export default function Chaveamento() {
   const [state, setState] = useState<any>(null);
-  const [groupCount, setGroupCount] = useState(2);
-  const [robotsPerGroup, setRobotsPerGroup] = useState(4);
-  const [advancePerGroup, setAdvancePerGroup] = useState(2);
+
+  // valores temporários (inputs)
+  const [groupCountInput, setGroupCountInput] = useState(2);
+  const [robotsPerGroupInput, setRobotsPerGroupInput] = useState(4);
+  const [advancePerGroupInput, setAdvancePerGroupInput] = useState(2);
+
+  // valores ativos aplicados
+  const [groupCountActive, setGroupCountActive] = useState(2);
+  const [advancePerGroupActive, setAdvancePerGroupActive] = useState(2);
+
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api("/state").then((r) => setState(r.state));
+    api("/state").then((r) => {
+      setState(r.state);
+      setGroupCountActive(r.state?.groupCount || 2);
+      setAdvancePerGroupActive(r.state?.advancePerGroup || 2);
+    });
+
     return onMessage((m) => {
-      if (m.type === "UPDATE_STATE") setState(m.payload.state);
+      if (m.type === "UPDATE_STATE") {
+        setState(m.payload.state);
+        if (m.payload.state.groupCount)
+          setGroupCountActive(m.payload.state.groupCount);
+        if (m.payload.state.advancePerGroup)
+          setAdvancePerGroupActive(m.payload.state.advancePerGroup);
+      }
     });
   }, []);
 
@@ -34,8 +52,14 @@ export default function Chaveamento() {
     setLoading(true);
     await api("/matches/generate", {
       method: "POST",
-      body: JSON.stringify({ groupCount, robotsPerGroup, advancePerGroup }),
+      body: JSON.stringify({
+        groupCount: groupCountInput,
+        robotsPerGroup: robotsPerGroupInput,
+        advancePerGroup: advancePerGroupInput,
+      }),
     });
+    setGroupCountActive(groupCountInput);
+    setAdvancePerGroupActive(advancePerGroupInput);
     setLoading(false);
   };
 
@@ -64,7 +88,7 @@ export default function Chaveamento() {
         </h1>
       </div>
 
-      {/* ---------- Configuração ---------- */}
+      {/* ---------- CONFIGURAÇÃO ---------- */}
       <div className="bg-white/10 p-6 rounded-2xl shadow-xl mb-10 max-w-3xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div>
@@ -74,8 +98,8 @@ export default function Chaveamento() {
             <input
               type="number"
               min="1"
-              value={groupCount}
-              onChange={(e) => setGroupCount(Number(e.target.value))}
+              value={groupCountInput}
+              onChange={(e) => setGroupCountInput(Number(e.target.value))}
               className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full"
             />
           </div>
@@ -87,8 +111,8 @@ export default function Chaveamento() {
             <input
               type="number"
               min="2"
-              value={robotsPerGroup}
-              onChange={(e) => setRobotsPerGroup(Number(e.target.value))}
+              value={robotsPerGroupInput}
+              onChange={(e) => setRobotsPerGroupInput(Number(e.target.value))}
               className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full"
             />
           </div>
@@ -100,8 +124,8 @@ export default function Chaveamento() {
             <input
               type="number"
               min="1"
-              value={advancePerGroup}
-              onChange={(e) => setAdvancePerGroup(Number(e.target.value))}
+              value={advancePerGroupInput}
+              onChange={(e) => setAdvancePerGroupInput(Number(e.target.value))}
               className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full"
             />
           </div>
@@ -155,7 +179,7 @@ export default function Chaveamento() {
                       <tr
                         key={r.robotId}
                         className={`border-b border-white/10 ${
-                          idx2 < advancePerGroup
+                          idx2 < advancePerGroupActive
                             ? "text-white font-bold"
                             : "text-white/50"
                         }`}
@@ -214,7 +238,7 @@ export default function Chaveamento() {
       <div className="mt-10 text-center text-white/60 text-sm">
         Após o fim das partidas, os{" "}
         <span className="text-arena-accent font-bold">
-          {advancePerGroup} primeiros
+          {advancePerGroupActive} primeiros
         </span>{" "}
         de cada grupo avançam automaticamente para o mata-mata.
       </div>
