@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
-import { Trophy, Swords, Settings } from "lucide-react";
+import { Trophy, Swords, Settings, Play } from "lucide-react";
 
 interface GroupTableItem {
   robotId: string;
@@ -39,15 +39,15 @@ export default function Chaveamento() {
 
     return onMessage((m) => {
       if (m.type === "UPDATE_STATE") {
-        setState(m.payload.state);
-        if (m.payload.state.groupCount)
-          setGroupCountActive(m.payload.state.groupCount);
-        if (m.payload.state.advancePerGroup)
-          setAdvancePerGroupActive(m.payload.state.advancePerGroup);
+        const s = m.payload.state;
+        setState(s);
+        if (s.groupCount) setGroupCountActive(s.groupCount);
+        if (s.advancePerGroup) setAdvancePerGroupActive(s.advancePerGroup);
       }
     });
   }, []);
 
+  // 🔁 Gera chaveamento
   const gerarChaveamento = async () => {
     setLoading(true);
     await api("/matches/generate", {
@@ -61,6 +61,17 @@ export default function Chaveamento() {
     setGroupCountActive(groupCountInput);
     setAdvancePerGroupActive(advancePerGroupInput);
     setLoading(false);
+  };
+
+  // 🚀 Iniciar combate
+  const iniciarCombate = async (matchId: string) => {
+    try {
+      await api(`/matches/${matchId}/start`, { method: "POST" });
+      alert("🚀 Combate iniciado!");
+    } catch (err) {
+      console.error("Erro ao iniciar combate:", err);
+      alert("❌ Falha ao iniciar o combate.");
+    }
   };
 
   if (!state)
@@ -210,9 +221,9 @@ export default function Chaveamento() {
                 .map((m: any) => (
                   <div
                     key={m.id}
-                    className={`flex justify-between items-center bg-white/10 rounded-lg p-3 ${
-                      m.finished
-                        ? "border-l-4 border-arena-accent"
+                    className={`flex justify-between items-center bg-white/10 rounded-lg p-3 transition-all ${
+                      state.currentMatchId === m.id
+                        ? "border-2 border-yellow-400 shadow-[0_0_15px_#FFD700] animate-pulse"
                         : "border-l-4 border-transparent"
                     }`}
                   >
@@ -221,13 +232,29 @@ export default function Chaveamento() {
                       <span className="text-arena-accent">vs</span>{" "}
                       {m.robotB?.name ?? "?"}
                     </span>
-                    {m.finished ? (
-                      <span className="font-bold text-arena-accent">
-                        {m.scoreA} - {m.scoreB}
-                      </span>
-                    ) : (
-                      <span className="text-white/50">pendente</span>
-                    )}
+
+                    <div className="flex items-center gap-2">
+                      {m.finished ? (
+                        <span className="font-bold text-arena-accent">
+                          {m.scoreA} - {m.scoreB}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => iniciarCombate(m.id)}
+                          disabled={state.currentMatchId === m.id}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold transition ${
+                            state.currentMatchId === m.id
+                              ? "bg-yellow-400/30 text-yellow-200 cursor-not-allowed"
+                              : "bg-arena-accent text-black hover:opacity-90"
+                          }`}
+                        >
+                          <Play size={14} />
+                          {state.currentMatchId === m.id
+                            ? "Em andamento"
+                            : "Iniciar Luta"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
             </div>
