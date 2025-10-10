@@ -431,6 +431,46 @@ app.post("/arena/reset", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/matches/:id/judges", (req, res) => {
+  const match = state.matches.find((m) => m.id === req.params.id);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+
+  const { judges } = req.body; // Recebe as pontuações dos jurados
+  let totalA = 0, totalB = 0;
+
+  // Calcula a pontuação para cada robô
+  judges.forEach((j: any) => {
+    totalA += j.damageA + j.hitsA;
+    totalB += j.damageB + j.hitsB;
+  });
+
+  // Atualiza a pontuação final no combate
+  match.scoreA = totalA;
+  match.scoreB = totalB;
+  match.winner = totalA > totalB ? match.robotA : match.robotB;
+  match.finished = true;
+
+  // Atualiza os robôs com a pontuação final
+  if (match.robotA) updateRobotScore(match.robotA.id, totalA, totalB);
+  if (match.robotB) updateRobotScore(match.robotB.id, totalA, totalB);
+
+  state.winner = match.winner;
+
+  // Atualiza o estado global
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true, result: match });
+});
+
+// Função auxiliar para atualizar o robô com a pontuação
+function updateRobotScore(robotId: string, scoreA: number, scoreB: number) {
+  const robot = state.robots.find((r) => r.id === robotId);
+  if (robot) {
+    robot.score = (robot.score || 0) + (scoreA || 0) + (scoreB || 0); // Acumula a pontuação do robô
+    console.log(`✅ Pontuação do robô ${robot.name}: ${robot.score}`);
+  }
+}
+
+
 /* ------------------ WEBSOCKET ------------------ */
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));

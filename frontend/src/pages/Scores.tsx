@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
+import { Bot } from "lucide-react";
 
 interface Robot {
   id: string;
@@ -19,14 +20,14 @@ export default function Scores() {
   ]);
 
   useEffect(() => {
-    // busca estado inicial
+    // Busca o estado inicial
     api("/state").then((r) => {
       setState(r.state);
       const current = r.state.matches.find((m: any) => m.id === r.state.currentMatchId);
       setMatch(current);
     });
 
-    // atualiza em tempo real
+    // Atualiza em tempo real
     return onMessage((m) => {
       if (m.type === "UPDATE_STATE") {
         setState(m.payload.state);
@@ -46,12 +47,19 @@ export default function Scores() {
 
   const submit = async () => {
     if (!match) return alert("❌ Nenhuma luta ativa!");
+
+    // Envia as pontuações para o backend (no formato correto)
     await api(`/matches/${match.id}/judges`, {
       method: "POST",
       body: JSON.stringify({ judges }),
+      headers: {
+        "Content-Type": "application/json", // Garantir que o header está correto
+      },
     });
+
     alert("✅ Pontuação enviada com sucesso!");
   };
+
 
   if (!match) {
     return (
@@ -67,6 +75,27 @@ export default function Scores() {
   const robotA: Robot = match.robotA;
   const robotB: Robot = match.robotB;
 
+  const renderRobotImage = (robot: Robot, color: string) => {
+    // Verifica se o robô tem imagem e exibe
+    if (robot?.image)
+      return (
+        <img
+          src={robot.image}
+          alt={robot.name}
+          className={`w-32 h-32 object-cover rounded-full border-4 border-${color}-400 shadow-lg mb-3`}
+        />
+      );
+
+    // Fallback caso a imagem não esteja disponível
+    return (
+      <div
+        className={`w-32 h-32 flex items-center justify-center rounded-full border-4 border-${color}-400 bg-${color}-950/40 shadow-inner mb-3`}
+      >
+        <Bot size={48} className={`text-${color}-300`} />
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center p-10">
       <h1 className="text-3xl font-extrabold text-center mb-10">
@@ -79,13 +108,7 @@ export default function Scores() {
         {/* -------- ROBÔ AZUL -------- */}
         <div className="bg-gradient-to-b from-blue-900/90 to-blue-700/50 rounded-2xl p-6 shadow-2xl border border-blue-400/30">
           <div className="flex flex-col items-center mb-6">
-            {robotA?.image && (
-              <img
-                src={robotA.image}
-                alt={robotA.name}
-                className="w-32 h-32 object-cover rounded-full border-4 border-blue-400 mb-3"
-              />
-            )}
+            {renderRobotImage(robotA, "blue")}
             <h2 className="text-2xl font-bold text-blue-300">{robotA?.name ?? "Robô Azul"}</h2>
             {robotA?.team && (
               <p className="text-sm text-white/70 mt-1">{robotA.team}</p>
@@ -137,13 +160,7 @@ export default function Scores() {
         {/* -------- ROBÔ VERDE -------- */}
         <div className="bg-gradient-to-b from-green-900/90 to-green-700/50 rounded-2xl p-6 shadow-2xl border border-green-400/30">
           <div className="flex flex-col items-center mb-6">
-            {robotB?.image && (
-              <img
-                src={robotB.image}
-                alt={robotB.name}
-                className="w-32 h-32 object-cover rounded-full border-4 border-green-400 mb-3"
-              />
-            )}
+            {renderRobotImage(robotB, "green")}
             <h2 className="text-2xl font-bold text-green-300">{robotB?.name ?? "Robô Verde"}</h2>
             {robotB?.team && (
               <p className="text-sm text-white/70 mt-1">{robotB.team}</p>
