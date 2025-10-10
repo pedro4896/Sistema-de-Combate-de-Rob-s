@@ -461,6 +461,59 @@ app.post("/matches/:id/judges", (req, res) => {
   res.json({ ok: true, result: match });
 });
 
+// Endpoint para K.O
+app.post("/matches/:id/ko", (req, res) => {
+  const { robotId, winnerId, isKO } = req.body;
+  const match = state.matches.find((m) => m.id === req.params.id);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+
+  // Aplica a pontuação máxima (33) para o vencedor
+  const winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
+  if (!winner) return res.status(400).json({ error: "Winner not found" });
+
+  match.scoreA = isKO ? 33 : 0;
+  match.scoreB = isKO ? 0 : 33;
+  match.winner = winner;
+
+  match.finished = true;
+
+  // Atualiza os robôs com a pontuação
+  if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA, match.scoreB);
+  if (match.robotB) updateRobotScore(match.robotB.id, match.scoreA, match.scoreB);
+
+  state.winner = winner;
+  broadcast("UPDATE_STATE", { state });
+
+  res.json({ ok: true, result: match });
+});
+
+// Endpoint para W.O
+app.post("/matches/:id/wo", (req, res) => {
+  const { robotId, winnerId, isKO } = req.body;
+  const match = state.matches.find((m) => m.id === req.params.id);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+
+  // Aplica a pontuação máxima (33) para o vencedor
+  const winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
+  if (!winner) return res.status(400).json({ error: "Winner not found" });
+
+  match.scoreA = isKO ? 33 : 0;
+  match.scoreB = isKO ? 0 : 33;
+  match.winner = winner;
+
+  match.finished = true;
+
+  // Atualiza os robôs com a pontuação
+  if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA, match.scoreB);
+  if (match.robotB) updateRobotScore(match.robotB.id, match.scoreA, match.scoreB);
+
+  state.winner = winner;
+  broadcast("UPDATE_STATE", { state });
+
+  res.json({ ok: true, result: match });
+});
+
+
 // Função auxiliar para atualizar o robô com a pontuação
 function updateRobotScore(robotId: string, scoreA: number, scoreB: number) {
   const robot = state.robots.find((r) => r.id === robotId);

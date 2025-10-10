@@ -233,6 +233,17 @@ export default function Chaveamento() {
                       {m.robotB?.name ?? "?"}
                     </span>
 
+                    {/* Mostrar se foi K.O ou W.O */}
+                    {m.finished && (
+                      <div className="text-sm text-yellow-400 mt-2">
+                        {m.winner
+                          ? `✅ Vencedor: ${m.winner.name}`
+                          : m.scoreA === 33
+                          ? "❌ K.O - " + m.robotB?.name
+                          : "❌ W.O - " + m.robotA?.name}
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-2">
                       {m.finished ? (
                         <span className="font-bold text-arena-accent">

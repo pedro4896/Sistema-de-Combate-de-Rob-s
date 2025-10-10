@@ -60,6 +60,35 @@ export default function Scores() {
     alert("✅ Pontuação enviada com sucesso!");
   };
 
+  const submitKO = async (robotId: string) => {
+    if (!match) return alert("❌ Nenhuma luta ativa!");
+
+    const robot = match.robotA?.id === robotId ? match.robotA : match.robotB;
+    
+    // Envia a pontuação máxima (33 pontos) para o robô
+    await api(`/matches/${match.id}/ko`, {
+      method: "POST",
+      body: JSON.stringify({ robotId, winnerId: robot.id, isKO: true }),
+    });
+
+    alert(`${robot.name} recebeu um K.O. e ganhou automaticamente com 33 pontos!`);
+  };
+
+  const submitWO = async (robotId: string) => {
+    if (!match) return alert("❌ Nenhuma luta ativa!");
+
+    const robot = match.robotA?.id === robotId ? match.robotA : match.robotB;
+    
+    // Envia a pontuação máxima (33 pontos) para o robô
+    await api(`/matches/${match.id}/wo`, {
+      method: "POST",
+      body: JSON.stringify({ robotId, winnerId: robot.id, isKO: false }),
+    });
+
+    alert(`${robot.name} recebeu um W.O. e ganhou automaticamente com 33 pontos!`);
+  };
+
+
 
   if (!match) {
     return (
@@ -217,6 +246,24 @@ export default function Scores() {
       >
         Enviar Pontuação
       </button>
+
+      {/* -------- BOTÕES K.O. e W.O. -------- */}
+
+      <div className="flex justify-between gap-4 mt-6">
+        <button
+          onClick={() => submitKO(match.robotA?.id || "")}
+          className="bg-red-500 text-white font-bold py-3 px-8 rounded-xl hover:opacity-90 transition"
+        >
+          K.O
+        </button>
+        <button
+          onClick={() => submitWO(match.robotB?.id || "")}
+          className="bg-orange-500 text-white font-bold py-3 px-8 rounded-xl hover:opacity-90 transition"
+        >
+          W.O
+        </button>
+      </div>
+
     </div>
   );
 }
