@@ -435,20 +435,30 @@ app.post("/matches/:id/judges", (req, res) => {
   const match = state.matches.find((m) => m.id === req.params.id);
   if (!match) return res.status(404).json({ error: "Match not found" });
 
-  const { judges } = req.body; // Recebe as pontuações dos jurados
+  const { judges, decision, winnerId } = req.body; // Recebe as pontuações dos jurados e a decisão de K.O ou W.O
   let totalA = 0, totalB = 0;
 
-  // Calcula a pontuação para cada robô
-  judges.forEach((j: any) => {
-    totalA += j.damageA + j.hitsA;
-    totalB += j.damageB + j.hitsB;
-  });
+  // Se for K.O ou W.O, aplica 33 pontos ao vencedor
+  if (decision === "KO" || decision === "WO") {
+    // Verifica qual robô foi selecionado para ganhar
+    match.scoreA = winnerId === match.robotA?.id ? 33 : 0;
+    match.scoreB = winnerId === match.robotB?.id ? 33 : 0;
 
-  // Atualiza a pontuação final no combate
-  match.scoreA = totalA;
-  match.scoreB = totalB;
-  match.winner = totalA > totalB ? match.robotA : match.robotB;
-  match.finished = true;
+    match.winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
+    match.finished = true;
+  } else {
+    // Caso contrário, calcula a pontuação para cada robô
+    judges.forEach((j: any) => {
+      totalA += j.damageA + j.hitsA;
+      totalB += j.damageB + j.hitsB;
+    });
+
+    // Atualiza a pontuação final no combate
+    match.scoreA = totalA;
+    match.scoreB = totalB;
+    match.winner = totalA > totalB ? match.robotA : match.robotB;
+    match.finished = true;
+  }
 
   // Atualiza os robôs com a pontuação final
   if (match.robotA) updateRobotScore(match.robotA.id, totalA, totalB);
@@ -458,58 +468,8 @@ app.post("/matches/:id/judges", (req, res) => {
 
   // Atualiza o estado global
   broadcast("UPDATE_STATE", { state });
-  res.json({ ok: true, result: match });
-});
 
-// Endpoint para K.O
-app.post("/matches/:id/ko", (req, res) => {
-  const { robotId, winnerId, isKO } = req.body;
-  const match = state.matches.find((m) => m.id === req.params.id);
-  if (!match) return res.status(404).json({ error: "Match not found" });
-
-  // Aplica a pontuação máxima (33) para o vencedor
-  const winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
-  if (!winner) return res.status(400).json({ error: "Winner not found" });
-
-  match.scoreA = isKO ? 33 : 0;
-  match.scoreB = isKO ? 0 : 33;
-  match.winner = winner;
-
-  match.finished = true;
-
-  // Atualiza os robôs com a pontuação
-  if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA, match.scoreB);
-  if (match.robotB) updateRobotScore(match.robotB.id, match.scoreA, match.scoreB);
-
-  state.winner = winner;
-  broadcast("UPDATE_STATE", { state });
-
-  res.json({ ok: true, result: match });
-});
-
-// Endpoint para W.O
-app.post("/matches/:id/wo", (req, res) => {
-  const { robotId, winnerId, isKO } = req.body;
-  const match = state.matches.find((m) => m.id === req.params.id);
-  if (!match) return res.status(404).json({ error: "Match not found" });
-
-  // Aplica a pontuação máxima (33) para o vencedor
-  const winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
-  if (!winner) return res.status(400).json({ error: "Winner not found" });
-
-  match.scoreA = isKO ? 33 : 0;
-  match.scoreB = isKO ? 0 : 33;
-  match.winner = winner;
-
-  match.finished = true;
-
-  // Atualiza os robôs com a pontuação
-  if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA, match.scoreB);
-  if (match.robotB) updateRobotScore(match.robotB.id, match.scoreA, match.scoreB);
-
-  state.winner = winner;
-  broadcast("UPDATE_STATE", { state });
-
+  // Responde com o resultado do combate
   res.json({ ok: true, result: match });
 });
 

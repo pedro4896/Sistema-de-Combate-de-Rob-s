@@ -18,6 +18,11 @@ export default function Scores() {
     { judgeId: "J2", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
     { judgeId: "J3", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
   ]);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
+  const [resultType, setResultType] = useState<"KO" | "WO">("KO");
+
+
 
   useEffect(() => {
     // Busca o estado inicial
@@ -45,49 +50,28 @@ export default function Scores() {
     setJudges(copy);
   };
 
-  const submit = async () => {
-    if (!match) return alert("❌ Nenhuma luta ativa!");
+const submitResult = async () => {
+  if (!match) return alert("❌ Nenhuma luta ativa!");
+  if (!selectedRobotId) return alert("❌ Selecione um robô!");
+  
+  // Define o tipo de decisão (K.O ou W.O)
+  const decision = resultType === "KO" ? "KO" : "WO";
 
-    // Envia as pontuações para o backend (no formato correto)
-    await api(`/matches/${match.id}/judges`, {
-      method: "POST",
-      body: JSON.stringify({ judges }),
-      headers: {
-        "Content-Type": "application/json", // Garantir que o header está correto
-      },
-    });
+  // Envia o resultado para o backend (K.O ou W.O)
+  await api(`/matches/${match.id}/judges`, {
+    method: "POST",
+    body: JSON.stringify({
+      judges: [],  // Não precisamos enviar os juízes para K.O ou W.O
+      decision,
+      winnerId: selectedRobotId, // O ID do robô vencedor
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
 
-    alert("✅ Pontuação enviada com sucesso!");
-  };
-
-  const submitKO = async (robotId: string) => {
-    if (!match) return alert("❌ Nenhuma luta ativa!");
-
-    const robot = match.robotA?.id === robotId ? match.robotA : match.robotB;
-    
-    // Envia a pontuação máxima (33 pontos) para o robô
-    await api(`/matches/${match.id}/ko`, {
-      method: "POST",
-      body: JSON.stringify({ robotId, winnerId: robot.id, isKO: true }),
-    });
-
-    alert(`${robot.name} recebeu um K.O. e ganhou automaticamente com 33 pontos!`);
-  };
-
-  const submitWO = async (robotId: string) => {
-    if (!match) return alert("❌ Nenhuma luta ativa!");
-
-    const robot = match.robotA?.id === robotId ? match.robotA : match.robotB;
-    
-    // Envia a pontuação máxima (33 pontos) para o robô
-    await api(`/matches/${match.id}/wo`, {
-      method: "POST",
-      body: JSON.stringify({ robotId, winnerId: robot.id, isKO: false }),
-    });
-
-    alert(`${robot.name} recebeu um W.O. e ganhou automaticamente com 33 pontos!`);
-  };
-
+  alert(`${resultType} aplicado! Robô ${selectedRobotId} ganhou com 33 pontos`);
+  setShowModal(false);  // Fecha o modal
+  setSelectedRobotId(null);  // Reseta o robô selecionado
+};
 
 
   if (!match) {
@@ -241,28 +225,123 @@ export default function Scores() {
 
       {/* -------- BOTÃO ENVIAR -------- */}
       <button
-        onClick={submit}
+        onClick={submitResult}
         className="mt-12 bg-yellow-400 text-black font-extrabold px-12 py-4 rounded-2xl text-lg hover:opacity-90 shadow-lg transition"
       >
         Enviar Pontuação
       </button>
-
-      {/* -------- BOTÕES K.O. e W.O. -------- */}
-
-      <div className="flex justify-between gap-4 mt-6">
+      {/* -------- BOTÃO KO/WO -------- */}
+      <div className="mt-6">
         <button
-          onClick={() => submitKO(match.robotA?.id || "")}
+          onClick={() => setShowModal(true)}
           className="bg-red-500 text-white font-bold py-3 px-8 rounded-xl hover:opacity-90 transition"
         >
-          K.O
-        </button>
-        <button
-          onClick={() => submitWO(match.robotB?.id || "")}
-          className="bg-orange-500 text-white font-bold py-3 px-8 rounded-xl hover:opacity-90 transition"
-        >
-          W.O
+          KO/WO
         </button>
       </div>
+
+      {/* ADD: Modal KO/WO */}
+      {showModal && match && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-[420px] p-6 text-black">
+            <h3 className="text-xl font-bold text-center mb-4">
+              Selecione o vencedor e o resultado
+            </h3>
+
+            {/* Robôs */}
+            <div className="space-y-3">
+              <button
+                onClick={() => setSelectedRobotId(match.robotA?.id)}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl border ${
+                  selectedRobotId === match.robotA?.id ? "border-blue-500 bg-blue-50" : "border-gray-200"
+                }`}
+              >
+                {match.robotA?.image ? (
+                  <img
+                    src={match.robotA?.image}
+                    alt={match.robotA?.name}
+                    className="w-12 h-12 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-gray-200 grid place-items-center">
+                    <Bot size={22} />
+                  </div>
+                )}
+                <div className="text-left">
+                  <div className="font-semibold">{match.robotA?.name}</div>
+                  <div className="text-xs text-gray-500">{match.robotA?.team}</div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setSelectedRobotId(match.robotB?.id)}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl border ${
+                  selectedRobotId === match.robotB?.id ? "border-green-500 bg-green-50" : "border-gray-200"
+                }`}
+              >
+                {match.robotB?.image ? (
+                  <img
+                    src={match.robotB?.image}
+                    alt={match.robotB?.name}
+                    className="w-12 h-12 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-gray-200 grid place-items-center">
+                    <Bot size={22} />
+                  </div>
+                )}
+                <div className="text-left">
+                  <div className="font-semibold">{match.robotB?.name}</div>
+                  <div className="text-xs text-gray-500">{match.robotB?.team}</div>
+                </div>
+              </button>
+            </div>
+
+            {/* Tipo de resultado */}
+            <div className="flex gap-4 mt-5">
+              <button
+                onClick={() => setResultType("KO")}
+                className={`flex-1 py-2 rounded-lg font-semibold ${
+                  resultType === "KO" ? "bg-red-500 text-white" : "bg-red-100 text-red-700"
+                }`}
+              >
+                K.O
+              </button>
+              <button
+                onClick={() => setResultType("WO")}
+                className={`flex-1 py-2 rounded-lg font-semibold ${
+                  resultType === "WO" ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700"
+                }`}
+              >
+                W.O
+              </button>
+            </div>
+
+            {/* Ações */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={submitResult}
+                className="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg disabled:opacity-50"
+                disabled={!selectedRobotId}
+              >
+                Confirmar
+              </button>
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setSelectedRobotId(null);
+                }}
+                className="flex-1 bg-gray-200 text-gray-800 font-semibold py-2 rounded-lg"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+
 
     </div>
   );
