@@ -517,3 +517,5 @@ wss.on("connection", (ws) => {
 server.listen(PORT, () =>
   console.log(`✅ Arena backend v6.1 (chaveamento dinâmico configurável) @${PORT}`)
 );
+
+console.log(state);

@@ -236,7 +236,7 @@ export default function Chaveamento() {
 
                     {/* Mostrar se foi K.O ou W.O */}
                     {m.finished && (
-                      <div className="flex text-sm text-yellow-400">
+                      <div className="flex text-sm text-yellow-400 items-center gap-1">
                         {m.winner ? `Vencedor: ${m.winner.name}` : "Empate"}
                       </div>
                     )}

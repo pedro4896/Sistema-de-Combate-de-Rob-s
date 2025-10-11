@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState , useMemo} from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { Bot } from "lucide-react";
@@ -98,11 +98,32 @@ const submitResult = async () => {
   setSelectedRobotId(null);  // Reseta o robô selecionado
 };
 
+  // Pega a luta atual; se não houver, pega a próxima pendente
+  const current = useMemo(() => {
+    if (!state) return null;
+    return (
+      state.matches.find((m: any) => m.id === state.currentMatchId) ??
+      state.matches.find((m: any) => !m.finished) ??
+      null
+    );
+  }, [state]);
+
 if (!state) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#000814] text-white"> 
       <h2 className="text-2xl font-bold">Carregando dados...</h2>
     </div>
+  );
+}
+
+  if (!current) {
+  return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#000814] text-white">
+        <h2 className="text-2xl font-bold mb-4">Nenhuma luta em andamento</h2>
+        <p className="text-white/60">
+          Aguarde o juiz iniciar uma partida para liberar a tela de pontuação.
+        </p>
+      </div>
   );
 }
 
