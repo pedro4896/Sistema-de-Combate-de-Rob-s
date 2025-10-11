@@ -165,7 +165,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center p-10">
       <h1 className="text-3xl font-extrabold text-center mb-10">
-        Avaliação dos Jurados — Round {match.round}
+        Avaliação dos Jurados
       </h1>
 
       {/* ======= PAINÉIS DOS ROBÔS ======= */}

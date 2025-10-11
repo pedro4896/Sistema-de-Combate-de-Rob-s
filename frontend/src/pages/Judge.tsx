@@ -22,6 +22,8 @@ export default function Judge() {
     );
   }, [state]);
 
+  console.log("Current match:", state.matches);
+
   if (!state) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#000814] text-white"> 
