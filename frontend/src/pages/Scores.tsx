@@ -50,6 +50,24 @@ export default function Scores() {
     setJudges(copy);
   };
 
+const submitJudges = async () => {
+  if (!match) return alert("❌ Nenhuma luta ativa!");
+
+  await api(`/matches/${match.id}/judges`, {
+    method: "POST",
+    body: JSON.stringify({
+      judges,         // Envia as pontuações dos juízes
+      decision: [],       // Tipo de decisão (K.O ou W.O)
+      winnerId: match.robotA?.id,  // Pode ser robotA ou robotB, dependendo de quem for vencedor
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+
+  alert(`pontuações enviadas!`);
+  setShowModal(false);
+};
+
+
 const submitResult = async () => {
   if (!match) return alert("❌ Nenhuma luta ativa!");
   if (!selectedRobotId) return alert("❌ Selecione um robô!");
@@ -225,7 +243,7 @@ const submitResult = async () => {
 
       {/* -------- BOTÃO ENVIAR -------- */}
       <button
-        onClick={submitResult}
+        onClick={submitJudges}
         className="mt-12 bg-yellow-400 text-black font-extrabold px-12 py-4 rounded-2xl text-lg hover:opacity-90 shadow-lg transition"
       >
         Enviar Pontuação
@@ -339,10 +357,6 @@ const submitResult = async () => {
           </div>
         </div>
       )}
-
-
-
-
     </div>
   );
 }
