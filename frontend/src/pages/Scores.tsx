@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { Bot } from "lucide-react";
+import { s } from "framer-motion/client";
 
 interface Robot {
   id: string;
@@ -13,6 +14,7 @@ interface Robot {
 export default function Scores() {
   const [state, setState] = useState<any>(null);
   const [match, setMatch] = useState<any>(null);
+  const[finished, setFinished] = useState(false);
   const [judges, setJudges] = useState([
     { judgeId: "J1", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
     { judgeId: "J2", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
@@ -22,27 +24,35 @@ export default function Scores() {
   const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"KO" | "WO">("KO");
 
+ useEffect(() => {
+  // Buscar o estado inicial
+  api("/state").then((r) => {
+    const current = r.state.matches.find((m: any) => m.id === r.state.currentMatchId);
+    setState(r.state);
+    setMatch(current); // Garantir que a luta ativa é recebida corretamente
+  });
 
+  // // Atualizar em tempo real via WebSocket
+  return onMessage((m) => {
+    if (m.type === "UPDATE_STATE") {
+      // Garantir que a atualização do estado seja feita corretamente
+      setState((prevState: any) => {
+        if (prevState.matches !== m.payload.state.matches) {
+          // Somente atualizar se houver uma mudança real no estado
+          return m.payload.state;
+        }
+        return prevState;
+      });
 
-  useEffect(() => {
-    // Busca o estado inicial
-    api("/state").then((r) => {
-      setState(r.state);
-      const current = r.state.matches.find((m: any) => m.id === r.state.currentMatchId);
-      setMatch(current);
-    });
+      // Verificar se a luta ativa foi alterada
+      const current = m.payload.state.matches.find(
+        (mm: any) => mm.id === m.payload.state.currentMatchId
+      );
+      setMatch(current); // Atualiza apenas a luta ativa
+    }
+  });
+}, []);
 
-    // Atualiza em tempo real
-    return onMessage((m) => {
-      if (m.type === "UPDATE_STATE") {
-        setState(m.payload.state);
-        const current = m.payload.state.matches.find(
-          (mm: any) => mm.id === m.payload.state.currentMatchId
-        );
-        setMatch(current);
-      }
-    });
-  }, []);
 
   const update = (ji: number, field: string, val: number) => {
     const copy = [...judges];
@@ -51,8 +61,6 @@ export default function Scores() {
   };
 
 const submitJudges = async () => {
-  if (!match) return alert("❌ Nenhuma luta ativa!");
-
   await api(`/matches/${match.id}/judges`, {
     method: "POST",
     body: JSON.stringify({
@@ -69,7 +77,6 @@ const submitJudges = async () => {
 
 
 const submitResult = async () => {
-  if (!match) return alert("❌ Nenhuma luta ativa!");
   if (!selectedRobotId) return alert("❌ Selecione um robô!");
   
   // Define o tipo de decisão (K.O ou W.O)
@@ -91,41 +98,49 @@ const submitResult = async () => {
   setSelectedRobotId(null);  // Reseta o robô selecionado
 };
 
+if (!state) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#000814] text-white"> 
+      <h2 className="text-2xl font-bold">Carregando dados...</h2>
+    </div>
+  );
+}
 
-  if (!match) {
-    return (
+if (match.finished) {
+  return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#000814] text-white">
         <h2 className="text-2xl font-bold mb-4">Nenhuma luta em andamento</h2>
         <p className="text-white/60">
           Aguarde o juiz iniciar uma partida para liberar a tela de pontuação.
         </p>
       </div>
-    );
-  }
+  );
+}
+console.log("Luta atual:", match);
 
-  const robotA: Robot = match.robotA;
-  const robotB: Robot = match.robotB;
+const robotA: Robot = match.robotA;
+const robotB: Robot = match.robotB;
 
-  const renderRobotImage = (robot: Robot, color: string) => {
-    // Verifica se o robô tem imagem e exibe
-    if (robot?.image)
-      return (
-        <img
-          src={robot.image}
-          alt={robot.name}
-          className={`w-32 h-32 object-cover rounded-full border-4 border-${color}-400 shadow-lg mb-3`}
-        />
-      );
-
-    // Fallback caso a imagem não esteja disponível
+const renderRobotImage = (robot: Robot, color: string) => {
+  // Verifica se o robô tem imagem e exibe
+  if (robot?.image)
     return (
-      <div
-        className={`w-32 h-32 flex items-center justify-center rounded-full border-4 border-${color}-400 bg-${color}-950/40 shadow-inner mb-3`}
-      >
-        <Bot size={48} className={`text-${color}-300`} />
-      </div>
+      <img
+        src={robot.image}
+        alt={robot.name}
+        className={`w-32 h-32 object-cover rounded-full border-4 border-${color}-400 shadow-lg mb-3`}
+      />
     );
-  };
+
+  // Fallback caso a imagem não esteja disponível
+  return (
+     <div
+      className={`w-32 h-32 flex items-center justify-center rounded-full border-4 border-${color}-400 bg-${color}-950/40 shadow-inner mb-3`}
+    >
+     <Bot size={48} className={`text-${color}-300`} />
+    </div>
+  );
+};
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center p-10">
