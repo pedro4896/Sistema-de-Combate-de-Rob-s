@@ -91,6 +91,8 @@ export default function Chaveamento() {
     "from-rose-900 to-rose-700",
   ];
 
+  console.log("STATE", state);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white p-8 select-none">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-10">
@@ -222,7 +224,7 @@ export default function Chaveamento() {
                   <div
                     key={m.id}
                     className={`flex justify-between items-center bg-white/10 rounded-lg p-3 transition-all ${
-                      state.currentMatchId === m.id
+                      m.finished === false && state.currentMatchId === m.id
                         ? "border-2 border-yellow-400 shadow-[0_0_15px_#FFD700] animate-pulse"
                         : "border-l-4 border-transparent"
                     }`}
