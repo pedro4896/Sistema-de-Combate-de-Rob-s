@@ -456,7 +456,11 @@ app.post("/matches/:id/judges", (req, res) => {
     // Atualiza a pontuação final no combate
     match.scoreA = totalA;
     match.scoreB = totalB;
-    match.winner = totalA > totalB ? match.robotA : match.robotB;
+    if (totalA === totalB) {
+      match.winner = null; // Nenhum vencedor
+    } else {
+      match.winner = totalA > totalB ? match.robotA : match.robotB;
+    }
     match.finished = true;
   }
 
@@ -477,12 +481,20 @@ app.post("/matches/:id/judges", (req, res) => {
 // Função auxiliar para atualizar o robô com a pontuação
 function updateRobotScore(robotId: string, scoreA: number, scoreB: number) {
   const robot = state.robots.find((r) => r.id === robotId);
+  console.log(robot)
   if (robot) {
     robot.score = (robot.score || 0) + (scoreA || 0) + (scoreB || 0); // Acumula a pontuação do robô
     console.log(`✅ Pontuação do robô ${robot.name}: ${robot.score}`);
   }
 }
 
+app.delete("/robots/:id", (req, res) => {
+  state.robots = state.robots.filter(r => r.id !== req.params.id);
+  state.matches = state.matches.filter(m => m.robotA?.id !== req.params.id && m.robotB?.id !== req.params.id);
+  if (state.currentMatchId && !state.matches.find(m => m.id === state.currentMatchId)) setCurrentMatch(null);
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true });
+});
 
 /* ------------------ WEBSOCKET ------------------ */
 wss.on("connection", (ws) => {

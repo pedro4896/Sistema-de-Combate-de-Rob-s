@@ -9,12 +9,12 @@ interface Robot {
   name: string;
   team?: string;
   image?: string;
+  score: number;
 }
 
 export default function Scores() {
   const [state, setState] = useState<any>(null);
   const [match, setMatch] = useState<any>(null);
-  const[finished, setFinished] = useState(false);
   const [judges, setJudges] = useState([
     { judgeId: "J1", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
     { judgeId: "J2", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
@@ -116,7 +116,6 @@ if (match.finished) {
       </div>
   );
 }
-console.log("Luta atual:", match);
 
 const robotA: Robot = match.robotA;
 const robotB: Robot = match.robotB;

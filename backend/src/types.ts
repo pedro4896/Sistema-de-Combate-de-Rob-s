@@ -3,6 +3,7 @@ export interface Robot {
   name: string;
   team: string;
   image?: string;
+  score: number;
 }
 
 export type Phase = "groups" | "elimination";

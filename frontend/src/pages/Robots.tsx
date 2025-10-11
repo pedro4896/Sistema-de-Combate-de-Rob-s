@@ -3,22 +3,24 @@ import { api } from "../api";
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
 import { Trash2, Plus } from "lucide-react";
+import { s } from "framer-motion/client";
 
-type Robot = { id:string; name:string; team:string; image?:string };
+type Robot = { id:string; name:string; team:string; image?:string, score:number; };
 
 export default function Robots() {
   const [robots, setRobots] = useState<Robot[]>([]);
   const [name, setName] = useState("");
   const [team, setTeam] = useState("");
   const [image, setImage] = useState("");
+  const [score, setScore] = useState(0);
 
   function refresh(s:any){ setRobots(s.robots); }
   useEffect(()=>{ api("/state").then(r=>refresh(r.state)); return onMessage(m=>m.type==="UPDATE_STATE"&&refresh(m.payload.state)); },[]);
 
   async function addRobot(){
     if(!name.trim())return;
-    await api("/robots",{method:"POST",body:JSON.stringify({name,team,image})});
-    setName(""); setTeam(""); setImage("");
+    await api("/robots",{method:"POST",body:JSON.stringify({name,team,image,score})});
+    setName(""); setTeam(""); setImage(""); setScore(0);
   }
   async function delRobot(id:string){ await api(`/robots/${id}`,{method:"DELETE"}); }
 

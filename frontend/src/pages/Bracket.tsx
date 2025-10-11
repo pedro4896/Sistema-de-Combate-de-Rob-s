@@ -91,8 +91,6 @@ export default function Chaveamento() {
     "from-rose-900 to-rose-700",
   ];
 
-  console.log("STATE", state);
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white p-8 select-none">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-10">
@@ -234,17 +232,15 @@ export default function Chaveamento() {
                       <span className="text-arena-accent">vs</span>{" "}
                       {m.robotB?.name ?? "?"}
                     </span>
+                    
 
                     {/* Mostrar se foi K.O ou W.O */}
                     {m.finished && (
-                      <div className="text-sm text-yellow-400 mt-2">
-                        {m.winner
-                          ? `✅ Vencedor: ${m.winner.name}`
-                          : m.scoreA === 33
-                          ? "❌ K.O - " + m.robotB?.name
-                          : "❌ W.O - " + m.robotA?.name}
+                      <div className="flex text-sm text-yellow-400">
+                        {m.winner ? `Vencedor: ${m.winner.name}` : "Empate"}
                       </div>
                     )}
+
 
                     <div className="flex items-center gap-2">
                       {m.finished ? (
