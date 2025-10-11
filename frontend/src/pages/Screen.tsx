@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
+import { Bot } from "lucide-react";
 
 export default function Screen() {
   const [state, setState] = useState<any>(null);
@@ -41,6 +42,27 @@ export default function Screen() {
       state.mainStatus === "idle" ||
       state.mainStatus === "finished");
 
+  const renderRobotImage = (robot: Robot, color: string) => {
+    // Verifica se o robô tem imagem e exibe
+    if (robot?.image)
+      return (
+        <img
+          src={robot.image}
+          alt={robot.name}
+          className={`object-cover w-full h-full`}
+        />
+      );
+
+    // Fallback caso a imagem não esteja disponível
+    return (
+      <div
+        className={`flex items-center justify-center shadow-inner mb-3`}
+      >
+      <Bot size={"80%"} className={`text-${color}-300`} />
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-[#000814] to-[#001933] text-white select-none">
       {/* TIMER CENTRAL */}
@@ -69,8 +91,8 @@ export default function Screen() {
                 alt={r?.name}
               />
             ) : (
-              <div className="mt-3 h-64 flex items-center justify-center bg-white/5 rounded-xl text-white/40">
-                Sem imagem
+              <div key ={r?.id} className="mt-3 h-64 flex items-center justify-center bg-white/5 rounded-xl text-white/40">
+                {renderRobotImage(r, i === 0 ? "blue" : "green")}
               </div>
             )}
             <div className="mt-2 text-sm text-white/70">

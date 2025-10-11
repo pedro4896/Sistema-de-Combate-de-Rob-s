@@ -4,6 +4,7 @@ import { onMessage } from "../ws";
 import { motion } from "framer-motion";
 import { Trash2, Plus } from "lucide-react";
 import { s } from "framer-motion/client";
+import { Bot } from "lucide-react";
 
 type Robot = { id:string; name:string; team:string; image?:string, score?:number; };
 
@@ -22,7 +23,29 @@ export default function Robots() {
     await api("/robots",{method:"POST",body:JSON.stringify({name,team,image,score})});
     setName(""); setTeam(""); setImage(""); setScore(0);
   }
+
   async function delRobot(id:string){ await api(`/robots/${id}`,{method:"DELETE"}); }
+
+  const renderRobotImage = (robot: Robot, color: string) => {
+    // Verifica se o robô tem imagem e exibe
+    if (robot?.image)
+      return (
+        <img
+          src={robot.image}
+          alt={robot.name}
+          className={`object-cover w-full h-full`}
+        />
+      );
+
+    // Fallback caso a imagem não esteja disponível
+    return (
+      <div
+        className={`flex items-center justify-center shadow-inner mb-3`}
+      >
+      <Bot size={"60%"} className={`text-${color}-300`} />
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -40,7 +63,7 @@ export default function Robots() {
         {robots.map((r,i)=>(
           <motion.div key={r.id} className="card" initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{delay:i*0.05}}>
             <div className="aspect-video rounded-xl overflow-hidden bg-black/40 flex items-center justify-center">
-              {r.image ? <img src={r.image} className="w-full h-full object-cover"/> : <span className="sub">Sem imagem</span>}
+              {renderRobotImage(r, "white")}
             </div>
             <div className="mt-3 flex items-center">
               <div>

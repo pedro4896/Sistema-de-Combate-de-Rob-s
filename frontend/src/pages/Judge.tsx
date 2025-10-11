@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { onMessage, send } from "../ws";
 import { Play, Pause, RotateCcw, AlarmClock, OctagonX } from "lucide-react";
+import { Bot } from "lucide-react";
 
 export default function Judge() {
   const [state, setState] = useState<any>(null);
@@ -57,6 +58,27 @@ if (current.finished) {
   const ss = String((state.mainTimer || 0) % 60).padStart(2, "0");
   const rec = state.recoveryActive ? state.recoveryTimer : 0;
 
+  const renderRobotImage = (robot: Robot, color: string) => {
+  // Verifica se o robô tem imagem e exibe
+  if (robot?.image)
+    return (
+      <img
+        src={robot.image}
+        alt={robot.name}
+        className={`object-cover w-full h-full`}
+      />
+    );
+
+  // Fallback caso a imagem não esteja disponível
+  return (
+     <div
+      className={`flex items-center justify-center shadow-inner mb-3`}
+    >
+     <Bot size={"80%"} className={`text-${color}-300`} />
+    </div>
+  );
+};
+
   return (
     <div className="space-y-6">
       {/* Info dos robôs */}
@@ -65,7 +87,7 @@ if (current.finished) {
           <div className="heading mb-2">{a?.name ?? "—"}</div>
           <div className="sub mb-2">Equipe: {a?.team ?? "—"}</div>
           <div className="aspect-video bg-black/40 rounded-xl overflow-hidden flex items-center justify-center mb-2">
-            {a?.image ? <img src={a.image} className="w-full h-full object-cover" /> : <span className="sub">Sem imagem</span>}
+            {renderRobotImage(a, "blue")}
           </div>
           <div className="sub">Score: {current?.scoreA ?? 0}</div>
         </div>
@@ -74,7 +96,7 @@ if (current.finished) {
           <div className="heading mb-2 text-right">{b?.name ?? "—"}</div>
           <div className="sub mb-2 text-right">Equipe: {b?.team ?? "—"}</div>
           <div className="aspect-video bg-black/40 rounded-xl overflow-hidden flex items-center justify-center mb-2">
-            {b?.image ? <img src={b.image} className="w-full h-full object-cover" /> : <span className="sub">Sem imagem</span>}
+            {renderRobotImage(b, "green")}
           </div>
           <div className="sub text-right">Score: {current?.scoreB ?? 0}</div>
         </div>

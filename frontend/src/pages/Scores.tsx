@@ -182,7 +182,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
           </div>
 
           <h3 className="text-lg font-bold text-center mb-4 text-yellow-400">
-            🧩 Notas dos Jurados
+            Notas dos Jurados
           </h3>
 
           <table className="w-full text-center border-collapse mb-6">
@@ -234,7 +234,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
           </div>
 
           <h3 className="text-lg font-bold text-center mb-4 text-yellow-400">
-            🧩 Notas dos Jurados
+            Notas dos Jurados
           </h3>
 
           <table className="w-full text-center border-collapse mb-6">
