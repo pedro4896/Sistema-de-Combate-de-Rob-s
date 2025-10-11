@@ -401,6 +401,13 @@ app.post("/matches/generate", (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/matches/elimination", (req, res) => {
+  const { matches } = req.body;
+  state.matches.push(...matches);
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true });
+});
+
 app.post("/matches/:id/start", (req, res) => {
   startMatch(req.params.id);
   res.json({ ok: true });
@@ -497,6 +504,20 @@ app.delete("/robots/:id", (req, res) => {
   broadcast("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
+
+app.put("/robots/:id", (req, res) => {
+  const robot = state.robots.find((r) => r.id === req.params.id);
+  if (!robot) return res.status(404).json({ error: "Robot not found" });
+
+  const { name, team, image } = req.body;
+  if (name) robot.name = name;
+  if (team) robot.team = team;
+  if (image !== undefined) robot.image = image;
+
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true, robot });
+});
+
 
 /* ------------------ WEBSOCKET ------------------ */
 wss.on("connection", (ws) => {

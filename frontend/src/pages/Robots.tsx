@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Trash2, Plus } from "lucide-react";
 import { s } from "framer-motion/client";
 import { Bot } from "lucide-react";
+import { Edit3 } from "lucide-react";
 
 type Robot = { id:string; name:string; team:string; image?:string, score?:number; };
 
@@ -14,6 +15,10 @@ export default function Robots() {
   const [team, setTeam] = useState("");
   const [image, setImage] = useState("");
   const [score, setScore] = useState(0);
+  const [editing, setEditing] = useState<Robot | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editTeam, setEditTeam] = useState("");
+  const [editImage, setEditImage] = useState("");
 
   function refresh(s:any){ setRobots(s.robots); }
   useEffect(()=>{ api("/state").then(r=>refresh(r.state)); return onMessage(m=>m.type==="UPDATE_STATE"&&refresh(m.payload.state)); },[]);
@@ -23,6 +28,28 @@ export default function Robots() {
     await api("/robots",{method:"POST",body:JSON.stringify({name,team,image,score})});
     setName(""); setTeam(""); setImage(""); setScore(0);
   }
+
+  // Abre modal de edição
+  const openEdit = (robot: Robot) => {
+    setEditing(robot);
+    setEditName(robot.name);
+    setEditTeam(robot.team || "");
+    setEditImage(robot.image || "");
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    await api(`/robots/${editing.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        name: editName,
+        team: editTeam,
+        image: editImage,
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    setEditing(null);
+  };
 
   async function delRobot(id:string){ await api(`/robots/${id}`,{method:"DELETE"}); }
 
@@ -65,16 +92,71 @@ export default function Robots() {
             <div className="aspect-video rounded-xl overflow-hidden bg-black/40 flex items-center justify-center">
               {renderRobotImage(r, "white")}
             </div>
-            <div className="mt-3 flex items-center">
+            <div className="mt-3 flex items-center justify-start gap-4">
               <div>
                 <div className="heading">{r.name}</div>
                 <div className="sub">Equipe: {r.team}</div>
               </div>
               <button className="ml-auto btn btn-danger" onClick={()=>delRobot(r.id)}><Trash2 size={16}/></button>
+              <button
+                onClick={() => openEdit(r)}
+                className="flex items-center gap-2 bg-yellow-400 text-black px-4 py-2 rounded-lg font-semibold hover:opacity-90 transition"
+              >
+                <Edit3 size={16} />
+              </button>
             </div>
           </motion.div>
         ))}
       </div>
+      {/* === MODAL DE EDIÇÃO === */}
+      {editing && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-[#001933] p-8 rounded-2xl w-96 text-center shadow-2xl border border-yellow-400/30">
+            <h2 className="text-2xl font-bold text-yellow-400 mb-4">
+              Editar Robô
+            </h2>
+
+            <input
+              type="text"
+              placeholder="Nome"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              className="w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center"
+            />
+
+            <input
+              type="text"
+              placeholder="Equipe"
+              value={editTeam}
+              onChange={(e) => setEditTeam(e.target.value)}
+              className="w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center"
+            />
+
+            <input
+              type="text"
+              placeholder="URL da imagem"
+              value={editImage}
+              onChange={(e) => setEditImage(e.target.value)}
+              className="w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center"
+            />
+
+            <div className="flex justify-between mt-4">
+              <button
+                onClick={() => setEditing(null)}
+                className="px-4 py-2 bg-gray-600 rounded-lg hover:opacity-80"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={saveEdit}
+                className="px-4 py-2 bg-yellow-400 text-black font-bold rounded-lg hover:opacity-80"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
