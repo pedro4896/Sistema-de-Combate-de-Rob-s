@@ -34,14 +34,14 @@ export interface GroupTableItem {
   robotId: string;
   name: string;
   team?: string;
-  pts: number;
-  wins: number;
-  draws: number;
-  losses: number;
-  gf: number;  // “gols a favor” (pontos marcados)
-  ga: number;  // “gols contra”
-  gd: number;  // saldo (gf - ga)
+  pts: number;     // Pontos totais do juiz
+  wins: number;    // Vitórias
+  draws: number;   // Empates
+  losses: number;  // Derrotas
+  ko: number;      // Vitórias por KO
+  wo: number;      // Vitórias por WO
 }
+
 
 export interface ArenaState {
   robots: Robot[];

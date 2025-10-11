@@ -2,19 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { Trophy, Swords, Settings, Play } from "lucide-react";
-
-interface GroupTableItem {
-  robotId: string;
-  name: string;
-  team?: string;
-  pts: number;
-  wins: number;
-  draws: number;
-  losses: number;
-  gf: number;
-  ga: number;
-  gd: number;
-}
+import type { GroupTableItem } from "../../../backend/src/types";
 
 export default function Chaveamento() {
   const [state, setState] = useState<any>(null);
@@ -54,22 +42,23 @@ export default function Chaveamento() {
     });
   }, []);
 
-  // 📊 Calcula tabela dos grupos
-  function calculateGroupTables(matches: Match[], groupTables: Record<string, GroupTableItem[]>) {
+  // Calcula tabela dos grupos
+function calculateGroupTables(matches: Match[], groupTables: Record<string, GroupTableItem[]>) {
   const newGroupTables: Record<string, GroupTableItem[]> = {};
 
   for (const g in groupTables) {
+    // Inicializa cada robô da tabela com estatísticas zeradas
     const table: GroupTableItem[] = groupTables[g].map(r => ({
       ...r,
       pts: 0,
       wins: 0,
       draws: 0,
       losses: 0,
-      gf: 0,
-      ga: 0,
-      gd: 0,
+      ko: 0,
+      wo: 0
     }));
 
+    // Processa apenas os matches finalizados do grupo
     matches
       .filter(m => m.group === g && m.finished)
       .forEach(m => {
@@ -77,41 +66,60 @@ export default function Chaveamento() {
         const robotB = table.find(r => r.robotId === m.robotB?.id);
         if (!robotA || !robotB) return;
 
-        robotA.gf += m.scoreA;
-        robotA.ga += m.scoreB;
-        robotA.gd = robotA.gf - robotA.ga;
+        // Pontuação dos juízes
+        robotA.pts += m.scoreA;
+        robotB.pts += m.scoreB;
 
-        robotB.gf += m.scoreB;
-        robotB.ga += m.scoreA;
-        robotB.gd = robotB.gf - robotB.ga;
-
-        if (m.winner) {
-          if (m.winner.id === robotA.robotId) {
+        // Resultado
+        if (m.type === "KO") {
+          // K.O: adiciona 1 ao KO do vencedor
+          if (m.winner?.id === robotA.robotId) {
             robotA.wins += 1;
-            robotA.pts += 3;
+            robotA.ko += 1;
             robotB.losses += 1;
-          } else if (m.winner.id === robotB.robotId) {
+          } else {
             robotB.wins += 1;
-            robotB.pts += 3;
+            robotB.ko += 1;
+            robotA.losses += 1;
+          }
+        } else if (m.type === "WO") {
+          // W.O: adiciona 1 ao WO do vencedor
+          if (m.winner?.id === robotA.robotId) {
+            robotA.wins += 1;
+            robotA.wo += 1;
+            robotB.losses += 1;
+          } else {
+            robotB.wins += 1;
+            robotB.wo += 1;
             robotA.losses += 1;
           }
         } else {
-          // Empate
-          robotA.draws += 1;
-          robotA.pts += 1;
-          robotB.draws += 1;
-          robotB.pts += 1;
+          // Normal
+          if (m.winner) {
+            if (m.winner.id === robotA.robotId) {
+              robotA.wins += 1;
+              robotB.losses += 1;
+            } else {
+              robotB.wins += 1;
+              robotA.losses += 1;
+            }
+          } else {
+            // Empate
+            robotA.draws += 1;
+            robotB.draws += 1;
+          }
         }
       });
 
-    // Ordena o grupo pelo total de pontos, depois GD e GF
-    newGroupTables[g] = table.sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+    // Ordena pelo total de pontos
+    newGroupTables[g] = table.sort((a, b) => b.pts - a.pts);
   }
 
   return newGroupTables;
 }
 
-  // 🔁 Gera chaveamento
+
+  // Gera chaveamento
   const gerarChaveamento = async () => {
     setLoading(true);
     await api("/matches/generate", {
@@ -222,7 +230,7 @@ export default function Chaveamento() {
         <p className="text-white/60 text-center">Nenhum grupo gerado ainda.</p>
       )}
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-10">
+      <div className="grid lg:grid-cols-2 lg:grid-cols-3 gap-10">
         {groups.map((g, idx) => (
           <div
             key={g}
@@ -239,13 +247,12 @@ export default function Chaveamento() {
                   <tr>
                     <th>#</th>
                     <th className="text-left pl-2">Robô</th>
-                    <th>PTS</th>
-                    <th>W</th>
-                    <th>D</th>
-                    <th>L</th>
-                    <th>GF</th>
-                    <th>GA</th>
-                    <th>GD</th>
+                    <th>Pontos</th>
+                    <th>Vitórias</th>
+                    <th>Empate</th>
+                    <th>Derrotas</th>
+                    <th>KO</th>
+                    <th>WO</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -265,9 +272,8 @@ export default function Chaveamento() {
                         <td>{r.wins}</td>
                         <td>{r.draws}</td>
                         <td>{r.losses}</td>
-                        <td>{r.gf}</td>
-                        <td>{r.ga}</td>
-                        <td>{r.gd}</td>
+                        <td>{r.ko}</td>
+                        <td>{r.wo}</td>
                       </tr>
                     )
                   )}
