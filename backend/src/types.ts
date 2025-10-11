@@ -1,9 +1,9 @@
 export interface Robot {
   id: string;
   name: string;
-  team: string;
+  team?: string;
   image?: string;
-  score: number;
+  score?: number;
 }
 
 export type Phase = "groups" | "elimination";

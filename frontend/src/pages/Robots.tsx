@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Trash2, Plus } from "lucide-react";
 import { s } from "framer-motion/client";
 
-type Robot = { id:string; name:string; team:string; image?:string, score:number; };
+type Robot = { id:string; name:string; team:string; image?:string, score?:number; };
 
 export default function Robots() {
   const [robots, setRobots] = useState<Robot[]>([]);

@@ -384,8 +384,8 @@ function startMatch(id: string) {
 app.get("/state", (_req, res) => res.json({ state }));
 
 app.post("/robots", (req, res) => {
-  const { name, team, image } = req.body;
-  const robot: Robot = { id: uuidv4(), name, team, image };
+  const { name, team, image, score } = req.body;
+  const robot: Robot = { id: uuidv4(), name, team, image, score: score || 0 };
   state.robots.push(robot);
   broadcast("UPDATE_STATE", { state });
   res.json(robot);
@@ -465,8 +465,8 @@ app.post("/matches/:id/judges", (req, res) => {
   }
 
   // Atualiza os robôs com a pontuação final
-  if (match.robotA) updateRobotScore(match.robotA.id, totalA, totalB);
-  if (match.robotB) updateRobotScore(match.robotB.id, totalA, totalB);
+  if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA);
+  if (match.robotB) updateRobotScore(match.robotB.id, match.scoreB);
 
   state.winner = match.winner;
 
@@ -479,11 +479,10 @@ app.post("/matches/:id/judges", (req, res) => {
 
 
 // Função auxiliar para atualizar o robô com a pontuação
-function updateRobotScore(robotId: string, scoreA: number, scoreB: number) {
+function updateRobotScore(robotId: string, scoreAtual: number) {
   const robot = state.robots.find((r) => r.id === robotId);
-  console.log(robot)
   if (robot) {
-    robot.score = (robot.score || 0) + (scoreA || 0) + (scoreB || 0); // Acumula a pontuação do robô
+    robot.score = (robot.score || 0) + scoreAtual; // Acumula a pontuação do robô
     console.log(`✅ Pontuação do robô ${robot.name}: ${robot.score}`);
   }
 }
