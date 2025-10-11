@@ -19,6 +19,7 @@ export interface Match {
   scoreB: number;
   winner: Robot | null;
   finished: boolean;
+  type: "normal" | "KO" | "WO";  // normal, k.o ou w.o
 }
 
 export interface RankingItem {

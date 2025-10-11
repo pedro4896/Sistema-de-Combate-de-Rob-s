@@ -446,6 +446,7 @@ app.post("/matches/:id/judges", (req, res) => {
 
     match.winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
     match.finished = true;
+    match.type = decision === "KO" ? "KO" : "WO";
   } else {
     // Caso contrário, calcula a pontuação para cada robô
     judges.forEach((j: any) => {
@@ -462,6 +463,7 @@ app.post("/matches/:id/judges", (req, res) => {
       match.winner = totalA > totalB ? match.robotA : match.robotB;
     }
     match.finished = true;
+    match.type = "normal";
   }
 
   // Atualiza os robôs com a pontuação final
@@ -472,6 +474,7 @@ app.post("/matches/:id/judges", (req, res) => {
 
   // Atualiza o estado global
   broadcast("UPDATE_STATE", { state });
+  console.log(match);
 
   // Responde com o resultado do combate
   res.json({ ok: true, result: match });

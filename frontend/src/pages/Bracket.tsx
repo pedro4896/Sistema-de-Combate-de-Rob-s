@@ -298,13 +298,20 @@ export default function Chaveamento() {
                     </span>
                     
 
-                    {/* Mostrar se foi K.O ou W.O */}
+                    {/* Mostrar vencedor se a partida terminou */}
                     {m.finished && (
                       <div className="flex text-sm text-yellow-400 items-center gap-1">
                         {m.winner ? `Vencedor: ${m.winner.name}` : "Empate"}
                       </div>
                     )}
 
+                    {/* Mostrar vencedor se a partida terminou */}
+                    {m.finished && (
+                      <div className="flex text-sm text-yellow-400 items-center gap-1">
+                        {m.type === "KO" && " K.O"}
+                        {m.type === "WO" && "W.O"}
+                      </div>
+                    )}
 
                     <div className="flex items-center gap-2">
                       {m.finished ? (
