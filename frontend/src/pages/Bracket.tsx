@@ -21,8 +21,8 @@ export default function Chaveamento() {
 
   // valores temporários (inputs)
   const [groupCountInput, setGroupCountInput] = useState(2);
-  const [robotsPerGroupInput, setRobotsPerGroupInput] = useState(4);
-  const [advancePerGroupInput, setAdvancePerGroupInput] = useState(2);
+  const [robotsPerGroupInput, setRobotsPerGroupInput] = useState(5);
+  const [advancePerGroupInput, setAdvancePerGroupInput] = useState(4);
 
   // valores ativos aplicados
   const [groupCountActive, setGroupCountActive] = useState(2);
@@ -31,21 +31,85 @@ export default function Chaveamento() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Busca estado inicial
     api("/state").then((r) => {
-      setState(r.state);
-      setGroupCountActive(r.state?.groupCount || 2);
-      setAdvancePerGroupActive(r.state?.advancePerGroup || 2);
+      const newState = { ...r.state };
+      newState.groupTables = calculateGroupTables(newState.matches, newState.groupTables);
+      setState(newState);
+
+      setGroupCountActive(newState?.groupCount || 2);
+      setAdvancePerGroupActive(newState?.advancePerGroup || 2);
     });
 
+    // Atualização em tempo real via WebSocket
     return onMessage((m) => {
       if (m.type === "UPDATE_STATE") {
-        const s = m.payload.state;
+        const s = { ...m.payload.state };
+        s.groupTables = calculateGroupTables(s.matches, s.groupTables);
         setState(s);
+
         if (s.groupCount) setGroupCountActive(s.groupCount);
         if (s.advancePerGroup) setAdvancePerGroupActive(s.advancePerGroup);
       }
     });
   }, []);
+
+  // 📊 Calcula tabela dos grupos
+  function calculateGroupTables(matches: Match[], groupTables: Record<string, GroupTableItem[]>) {
+  const newGroupTables: Record<string, GroupTableItem[]> = {};
+
+  for (const g in groupTables) {
+    const table: GroupTableItem[] = groupTables[g].map(r => ({
+      ...r,
+      pts: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      gf: 0,
+      ga: 0,
+      gd: 0,
+    }));
+
+    matches
+      .filter(m => m.group === g && m.finished)
+      .forEach(m => {
+        const robotA = table.find(r => r.robotId === m.robotA?.id);
+        const robotB = table.find(r => r.robotId === m.robotB?.id);
+        if (!robotA || !robotB) return;
+
+        robotA.gf += m.scoreA;
+        robotA.ga += m.scoreB;
+        robotA.gd = robotA.gf - robotA.ga;
+
+        robotB.gf += m.scoreB;
+        robotB.ga += m.scoreA;
+        robotB.gd = robotB.gf - robotB.ga;
+
+        if (m.winner) {
+          if (m.winner.id === robotA.robotId) {
+            robotA.wins += 1;
+            robotA.pts += 3;
+            robotB.losses += 1;
+          } else if (m.winner.id === robotB.robotId) {
+            robotB.wins += 1;
+            robotB.pts += 3;
+            robotA.losses += 1;
+          }
+        } else {
+          // Empate
+          robotA.draws += 1;
+          robotA.pts += 1;
+          robotB.draws += 1;
+          robotB.pts += 1;
+        }
+      });
+
+    // Ordena o grupo pelo total de pontos, depois GD e GF
+    newGroupTables[g] = table.sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+  }
+
+  return newGroupTables;
+}
 
   // 🔁 Gera chaveamento
   const gerarChaveamento = async () => {
