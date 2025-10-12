@@ -116,7 +116,7 @@ if (!state) {
   );
 }
 
-  if (!current) {
+if (!current) {
   return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#000814] text-white">
         <h2 className="text-2xl font-bold mb-4">Nenhuma luta em andamento</h2>

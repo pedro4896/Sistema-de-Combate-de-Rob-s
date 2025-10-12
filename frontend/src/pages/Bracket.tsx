@@ -117,8 +117,6 @@ function calculateGroupTables(matches: Match[], groupTables: Record<string, Grou
 
   return newGroupTables;
 }
-
-
   // Gera chaveamento
   const gerarChaveamento = async () => {
     setLoading(true);
@@ -363,7 +361,7 @@ const gerarMataMata = async () => {
             </h4>
             <div className="space-y-2">
               {matches
-                .filter((m: any) => m.group === g)
+                .filter((m: any) => m.group === g && ["groups", "elimination"].includes(m.phase))
                 .map((m: any) => (
                   <div
                     key={m.id}
@@ -432,29 +430,22 @@ const gerarMataMata = async () => {
         de cada grupo avançam automaticamente para o mata-mata.
       </div>
 
-      {/* ---------- GERAR MATA-MATA ---------- */}
-      <div className="text-center mt-12">
-        <button
-          onClick={gerarMataMata}
-          className="bg-yellow-400 text-black font-bold px-10 py-4 rounded-xl hover:opacity-90 transition-all duration-200"
-        >
-          🏆 Gerar Fase de Mata-Mata
-        </button>
-      </div>
-
-      {/* ---------- FASE ELIMINATÓRIA ---------- */}
-      <h2 className="text-2xl font-bold mt-16 mb-6 text-center">Fase de Mata-Mata</h2>
-
-      {(state.matches || []).filter((m: any) => m.phase === "elimination").length === 0 ? (
-        <p className="text-center text-white/60">Ainda não gerada.</p>
-      ) : (
-        <div className="max-w-3xl mx-auto space-y-3">
+      {/* ---------- MATA-MATA POR GRUPO ---------- */}
+      <h2 className="text-2xl font-bold mt-16 mb-6 text-center">
+        Mata-Mata Interno dos Grupos
+      </h2>
+      {Object.keys(state.groupTables || {}).map((label) => (
+        <div key={label} className="mb-8">
+          <h3 className="text-lg font-bold mb-3 text-yellow-400">
+            Grupo {label}
+          </h3>
           {(state.matches || [])
-            .filter((m: any) => m.phase === "elimination")
+            .filter((m: any) => m.phase === "elimination" && m.group === label)
+            .sort((a: any, b: any) => a.round - b.round)
             .map((m: any) => (
               <div
                 key={m.id}
-                className={`flex justify-between items-center bg-white/10 rounded-lg p-3 transition-all ${
+                className={`flex justify-between items-center bg-white/10 rounded-lg p-3 mb-2 transition-all ${
                   m.finished === false && state.currentMatchId === m.id
                     ? "border-2 border-yellow-400 shadow-[0_0_15px_#FFD700] animate-pulse"
                     : "border-l-4 border-transparent"
@@ -466,42 +457,42 @@ const gerarMataMata = async () => {
                   {m.robotB?.name ?? "?"}
                 </span>
 
-                {m.finished && (
-                  <div className="flex text-sm text-yellow-400 items-center gap-1">
-                    {m.winner ? `Vencedor: ${m.winner.name}` : "Empate"}
-                    {m.type === "KO" && " (K.O)"}
-                    {m.type === "WO" && " (W.O)"}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2">
-                  {m.finished ? (
+                {m.finished ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-yellow-400 font-semibold">
+                      {m.winner
+                        ? `Vencedor: ${m.winner.name} ${
+                            m.type === "KO"
+                              ? "(K.O)"
+                              : m.type === "WO"
+                              ? "(W.O)"
+                              : ""
+                          }`
+                        : "Empate"}
+                    </span>
                     <span className="font-bold text-arena-accent">
                       {m.scoreA} - {m.scoreB}
                     </span>
-                  ) : (
-                    <button
-                      onClick={() => iniciarCombate(m.id)}
-                      disabled={state.currentMatchId === m.id}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold transition ${
-                        state.currentMatchId === m.id
-                          ? "bg-yellow-400/30 text-yellow-200 cursor-not-allowed"
-                          : "bg-arena-accent text-black hover:opacity-90"
-                      }`}
-                    >
-                      <Play size={14} />
-                      {state.currentMatchId === m.id
-                        ? "Em andamento"
-                        : "Iniciar Luta"}
-                    </button>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => iniciarCombate(m.id)}
+                    disabled={state.currentMatchId === m.id}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold transition ${
+                      state.currentMatchId === m.id
+                        ? "bg-yellow-400/30 text-yellow-200 cursor-not-allowed"
+                        : "bg-arena-accent text-black hover:opacity-90"
+                    }`}
+                  >
+                    <Play size={14} />
+                    {state.currentMatchId === m.id ? "Em andamento" : "Iniciar Luta"}
+                  </button>
+                )}
               </div>
+
             ))}
         </div>
-      )}
-
-
+      ))}
     </div>
   );
 }
