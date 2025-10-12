@@ -680,6 +680,9 @@ app.post("/arena/reset", (_req, res) => {
 });
 
 app.get("/ranking", (_req, res) => {
+  // Mapeia robôs atualizados
+  const robotMap = Object.fromEntries(state.robots.map(r => [r.id, r]));
+
   // Todos os matches (grupos + mata-mata)
   const matches = state.matches.filter(
     (m) => m.phase === "groups" || m.phase === "elimination"
@@ -691,21 +694,24 @@ app.get("/ranking", (_req, res) => {
     if (!m.finished || !m.robotA || !m.robotB) continue;
     const { robotA, robotB } = m;
 
-    // Garante que os robôs estejam registrados
-    if (!table[robotA.id])
-      table[robotA.id] = {
-        ...robotA,
-        pts: robotA.score || 0,
+    // Busca sempre as infos mais recentes
+    const currentA = robotMap[robotA.id] || robotA;
+    const currentB = robotMap[robotB.id] || robotB;
+
+    if (!table[currentA.id])
+      table[currentA.id] = {
+        ...currentA,
+        pts: currentA.score || 0,
         wins: 0,
         losses: 0,
         draws: 0,
         ko: 0,
         wo: 0,
       };
-    if (!table[robotB.id])
-      table[robotB.id] = {
-        ...robotB,
-        pts: robotB.score || 0,
+    if (!table[currentB.id])
+      table[currentB.id] = {
+        ...currentB,
+        pts: currentB.score || 0,
         wins: 0,
         losses: 0,
         draws: 0,
@@ -715,14 +721,14 @@ app.get("/ranking", (_req, res) => {
 
     // Estatísticas básicas
     if (m.scoreA > m.scoreB) {
-      table[robotA.id].wins++;
-      table[robotB.id].losses++;
+      table[currentA.id].wins++;
+      table[currentB.id].losses++;
     } else if (m.scoreB > m.scoreA) {
-      table[robotB.id].wins++;
-      table[robotA.id].losses++;
+      table[currentB.id].wins++;
+      table[currentA.id].losses++;
     } else {
-      table[robotA.id].draws++;
-      table[robotB.id].draws++;
+      table[currentA.id].draws++;
+      table[currentB.id].draws++;
     }
 
     // KO / WO
@@ -744,10 +750,15 @@ app.get("/ranking", (_req, res) => {
         ko: 0,
         wo: 0,
       };
+    } else {
+      // Atualiza dados de nome/foto/equipe se o robô já existia
+      table[r.id].name = r.name;
+      table[r.id].team = r.team;
+      table[r.id].image = r.image;
     }
   }
 
-  // Converte em array ordenado
+  // Ordena por pontuação e vitórias
   const ranking = Object.values(table).sort(
     (a: any, b: any) =>
       b.pts - a.pts ||
@@ -757,6 +768,7 @@ app.get("/ranking", (_req, res) => {
 
   res.json({ ok: true, ranking });
 });
+
 
 
 app.post("/matches/:id/judges", (req, res) => {

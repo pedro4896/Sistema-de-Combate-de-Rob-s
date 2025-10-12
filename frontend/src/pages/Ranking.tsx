@@ -34,6 +34,27 @@ export default function Ranking() {
     });
     }, []);
 
+    const renderRobotImage = (robot: Robot, color: string) => {
+      // Verifica se o robô tem imagem e exibe
+      if (robot?.image)
+        return (
+          <img
+            src={robot.image}
+            alt={robot.name}
+            className={`w-20 h-20 object-cover rounded-full shadow-lg mb-3 mt-3 flex items-center justify-center`}
+          />
+        );
+    
+      // Fallback caso a imagem não esteja disponível
+      return (
+         <div
+          className={`w-20 h-20 object-cover rounded-full shadow-lg mb-3 mt-3 flex items-center justify-center bg-${color}-800`}
+        >
+         <Bot size={48} className={`text-${color}-300`} />
+        </div>
+      );
+    };
+
 
 
   return (
@@ -74,8 +95,8 @@ export default function Ranking() {
                 >
                   <td className="py-3">{i + 1}</td>
                   <td className="text-left flex items-center gap-3 pl-3">
-                    <div className="bg-white/10 w-10 h-10 rounded-full flex items-center justify-center">
-                      <Bot size={20} className="text-white/70" />
+                    <div className="">
+                      {renderRobotImage(r, "green")}
                     </div>
                     <div className="flex flex-col text-left">
                       <span className="font-semibold text-white">{r.name}</span>
