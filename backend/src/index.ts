@@ -199,40 +199,63 @@ function makeItem(r: Robot): GroupTableItem {
 
 function computeGroupTables(): Record<string, GroupTableItem[]> {
   const tables: Record<string, Record<string, GroupTableItem>> = {};
-  const groupMatches = state.matches.filter(
-    (m) => m.phase === "groups" || m.phase === "elimination"
-  );
-  const groups = Array.from(new Set(groupMatches.map(m => m.group).filter(Boolean))) as string[];
 
+  // Considera apenas as lutas de fase de grupos
+  const groupMatches = state.matches.filter((m) => m.phase === "groups");
+
+  // Coleta todos os grupos existentes
+  const groups = Array.from(
+    new Set(groupMatches.map((m) => m.group).filter(Boolean))
+  );
+
+  // Inicializa as tabelas de cada grupo
   for (const g of groups) tables[g] = {};
 
   for (const m of groupMatches) {
-    const g = m.group as string;
-    const A = m.robotA?.id; const B = m.robotB?.id;
+    const g = m.group!;
+    const A = m.robotA?.id;
+    const B = m.robotB?.id;
     if (!A || !B) continue;
 
     if (!tables[g][A]) tables[g][A] = makeItem(m.robotA!);
     if (!tables[g][B]) tables[g][B] = makeItem(m.robotB!);
     if (!m.finished) continue;
 
-    tables[g][A].gf += m.scoreA; tables[g][A].ga += m.scoreB;
-    tables[g][B].gf += m.scoreB; tables[g][B].ga += m.scoreA;
+    // Pontuação padrão
+    if (m.scoreA > m.scoreB) {
+      tables[g][A].pts += 3; tables[g][A].wins++; tables[g][B].losses++;
+    } else if (m.scoreB > m.scoreA) {
+      tables[g][B].pts += 3; tables[g][B].wins++; tables[g][A].losses++;
+    } else {
+      tables[g][A].pts++; tables[g][B].pts++;
+      tables[g][A].draws++; tables[g][B].draws++;
+    }
 
-    if (m.scoreA > m.scoreB) { tables[g][A].pts += 3; tables[g][A].wins++; tables[g][B].losses++; }
-    else if (m.scoreB > m.scoreA) { tables[g][B].pts += 3; tables[g][B].wins++; tables[g][A].losses++; }
-    else { tables[g][A].pts++; tables[g][B].pts++; tables[g][A].draws++; tables[g][B].draws++; }
+    // Contabiliza KO e WO
+    if (m.type === "KO" && m.winner) {
+      tables[g][m.winner.id].ko = (tables[g][m.winner.id].ko || 0) + 1;
+    }
+    if (m.type === "WO" && m.winner) {
+      tables[g][m.winner.id].wo = (tables[g][m.winner.id].wo || 0) + 1;
+    }
   }
 
   const out: Record<string, GroupTableItem[]> = {};
   for (const g of Object.keys(tables)) {
-    const arr = Object.values(tables[g]).map(x => ({ ...x, gd: x.gf - x.ga }));
-    arr.sort((a, b) =>
-      b.pts - a.pts || b.gd - a.gd || b.gf - a.gf || a.name.localeCompare(b.name)
+    const arr = Object.values(tables[g]);
+    arr.sort(
+      (a, b) =>
+        b.pts - a.pts ||
+        b.wins - a.wins ||
+        a.name.localeCompare(b.name)
     );
     out[g] = arr;
   }
   return out;
 }
+
+
+
 
 // 🔹 Gera eliminação dentro de cada grupo (oitavas / quartas / semi / final do grupo)
 function generateGroupEliminations() {
@@ -655,6 +678,86 @@ app.post("/arena/reset", (_req, res) => {
   broadcast("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
+
+app.get("/ranking", (_req, res) => {
+  // Todos os matches (grupos + mata-mata)
+  const matches = state.matches.filter(
+    (m) => m.phase === "groups" || m.phase === "elimination"
+  );
+
+  const table: Record<string, any> = {};
+
+  for (const m of matches) {
+    if (!m.finished || !m.robotA || !m.robotB) continue;
+    const { robotA, robotB } = m;
+
+    // Garante que os robôs estejam registrados
+    if (!table[robotA.id])
+      table[robotA.id] = {
+        ...robotA,
+        pts: robotA.score || 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        ko: 0,
+        wo: 0,
+      };
+    if (!table[robotB.id])
+      table[robotB.id] = {
+        ...robotB,
+        pts: robotB.score || 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        ko: 0,
+        wo: 0,
+      };
+
+    // Estatísticas básicas
+    if (m.scoreA > m.scoreB) {
+      table[robotA.id].wins++;
+      table[robotB.id].losses++;
+    } else if (m.scoreB > m.scoreA) {
+      table[robotB.id].wins++;
+      table[robotA.id].losses++;
+    } else {
+      table[robotA.id].draws++;
+      table[robotB.id].draws++;
+    }
+
+    // KO / WO
+    if (m.type === "KO" && m.winner)
+      table[m.winner.id].ko = (table[m.winner.id].ko || 0) + 1;
+    if (m.type === "WO" && m.winner)
+      table[m.winner.id].wo = (table[m.winner.id].wo || 0) + 1;
+  }
+
+  // Garante que todos os robôs apareçam, mesmo sem luta
+  for (const r of state.robots) {
+    if (!table[r.id]) {
+      table[r.id] = {
+        ...r,
+        pts: r.score || 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        ko: 0,
+        wo: 0,
+      };
+    }
+  }
+
+  // Converte em array ordenado
+  const ranking = Object.values(table).sort(
+    (a: any, b: any) =>
+      b.pts - a.pts ||
+      b.wins - a.wins ||
+      a.name.localeCompare(b.name)
+  );
+
+  res.json({ ok: true, ranking });
+});
+
 
 app.post("/matches/:id/judges", (req, res) => {
   const match = state.matches.find((m) => m.id === req.params.id);
