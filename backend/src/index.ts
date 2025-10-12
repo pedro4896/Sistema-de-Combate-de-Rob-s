@@ -199,7 +199,9 @@ function makeItem(r: Robot): GroupTableItem {
 
 function computeGroupTables(): Record<string, GroupTableItem[]> {
   const tables: Record<string, Record<string, GroupTableItem>> = {};
-  const groupMatches = state.matches.filter(m => m.phase === "groups");
+  const groupMatches = state.matches.filter(
+    (m) => m.phase === "groups" || m.phase === "elimination"
+  );
   const groups = Array.from(new Set(groupMatches.map(m => m.group).filter(Boolean))) as string[];
 
   for (const g of groups) tables[g] = {};
@@ -281,54 +283,172 @@ function generateGroupEliminations() {
 }
 
 // 🔹 Gera o mata-mata final entre os campeões de cada grupo
-function generateGrandFinal() {
+// 🔹 Verifica se todos os grupos já têm um campeão e cria a fase final
+function checkAndGenerateGrandFinal() {
   const groupLabels = Object.keys(state.groupTables || {});
+  if (groupLabels.length === 0) return;
+
   const champions: any[] = [];
 
   for (const g of groupLabels) {
-    const lastMatch = [...state.matches]
-      .filter((m) => m.phase === "elimination" && m.group === g)
-      .sort((a, b) => b.round - a.round)[0];
+    const gMatches = state.matches
+      .filter((m: any) => m.phase === "elimination" && m.group === g)
+      .sort((a: any, b: any) => a.round - b.round);
 
-    if (lastMatch && lastMatch.finished && lastMatch.winner) {
-      champions.push(lastMatch.winner);
-    }
+    if (gMatches.length === 0) return; // ainda não começou a eliminação nesse grupo
+
+    const rounds = [...new Set(gMatches.map((m: any) => m.round))].sort((a, b) => a - b);
+    const lastRound = rounds[rounds.length - 1];
+    const lastRoundMatches = gMatches.filter((m: any) => m.round === lastRound);
+
+    // Se o último round ainda tem luta em andamento, ainda não acabou
+    const allFinished = lastRoundMatches.every((m: any) => m.finished);
+    if (!allFinished) return;
+
+    // Campeão do grupo (único vencedor do último round)
+    const winners = lastRoundMatches.filter((m: any) => m.winner).map((m: any) => m.winner);
+    if (winners.length === 1) champions.push(winners[0]);
+    else return; // grupo ainda indefinido
   }
 
-  if (champions.length < 2) return;
-
-  // evita duplicar
+  // Se já existe final global, não recria
   const already = state.matches.some(
     (m) => m.phase === "elimination" && !m.group
   );
   if (already) return;
 
+  if (champions.length < 2) return;
+
+  // 🔸 Cria o bracket final entre campeões
+  const BYE = { id: "bye", name: "BYE", team: "", image: "" };
   const shuffled = [...champions].sort(() => Math.random() - 0.5);
+  if (shuffled.length % 2 !== 0) shuffled.push(BYE);
+
+  const finals: any[] = [];
   for (let i = 0; i < shuffled.length; i += 2) {
     const A = shuffled[i];
     const B = shuffled[i + 1];
-    const isBye = !B;
-    const winner = isBye ? A : null;
+    const isBye = A.id === "bye" || B.id === "bye";
+    const winner = isBye ? (A.id !== "bye" ? A : B) : null;
 
-    state.matches.push({
+    finals.push({
       id: uuidv4(),
       phase: "elimination",
       round: 1,
-      group: null, // Final geral
-      robotA: A,
-      robotB: B || { id: "bye", name: "BYE", team: "", image: "" },
-      scoreA: isBye ? 33 : 0,
-      scoreB: 0,
-      winner,
+      group: null, // ← sem grupo = Fase Final
+      robotA: A.id !== "bye" ? A : null,
+      robotB: B.id !== "bye" ? B : null,
+      scoreA: isBye && winner?.id === A.id ? 33 : 0,
+      scoreB: isBye && winner?.id === B.id ? 33 : 0,
+      winner: isBye ? winner : null,
       finished: !!isBye,
       type: isBye ? "WO" : "normal",
     });
   }
 
+  state.matches.push(...finals);
   broadcast("UPDATE_STATE", { state });
-  console.log("🏆 Fase final global criada!");
+  console.log("🏆 Mata-mata final entre campeões gerado!");
 }
 
+
+// 🔹 Cria próximo round dentro de um grupo quando o anterior terminou
+function progressGroupEliminations() {
+  const groupLabels = Object.keys(state.groupTables || {});
+  for (const g of groupLabels) {
+    const groupMatches = state.matches
+      .filter((m: any) => m.phase === "elimination" && m.group === g)
+      .sort((a: any, b: any) => a.round - b.round);
+
+    if (groupMatches.length === 0) continue;
+
+    // pega o último round
+    const rounds = [...new Set(groupMatches.map((m: any) => m.round))].sort(
+      (a, b) => a - b
+    );
+    const lastRound = rounds[rounds.length - 1];
+    const lastMatches = groupMatches.filter((m: any) => m.round === lastRound);
+
+    // só continua se todas terminaram
+    const allFinished = lastMatches.every((m: any) => m.finished);
+    if (!allFinished) continue;
+
+    // vencedores
+    const winners = lastMatches
+      .filter((m: any) => m.winner)
+      .map((m: any) => m.winner);
+
+    // se já só sobrou 1 vencedor => campeão do grupo
+    if (winners.length <= 1) continue;
+
+    // monta próxima rodada
+    const nextRound = lastRound + 1;
+    const BYE = { id: "bye", name: "BYE", team: "", image: "" };
+    const shuffled = [...winners].sort(() => Math.random() - 0.5);
+    if (shuffled.length % 2 !== 0) shuffled.push(BYE);
+
+    const nextMatches: any[] = [];
+    for (let i = 0; i < shuffled.length; i += 2) {
+      const A = shuffled[i];
+      const B = shuffled[i + 1];
+      const isBye = A.id === "bye" || B.id === "bye";
+      const winner = isBye ? (A.id !== "bye" ? A : B) : null;
+
+      nextMatches.push({
+        id: uuidv4(),
+        phase: "elimination",
+        round: nextRound,
+        group: g,
+        robotA: A.id !== "bye" ? A : null,
+        robotB: B.id !== "bye" ? B : null,
+        scoreA: isBye && winner?.id === A.id ? 33 : 0,
+        scoreB: isBye && winner?.id === B.id ? 33 : 0,
+        winner: isBye ? winner : null,
+        finished: !!isBye,
+        type: isBye ? "WO" : "normal",
+      });
+    }
+
+    state.matches.push(...nextMatches);
+    broadcast("UPDATE_STATE", { state });
+    console.log(`🏁 Nova rodada criada no grupo ${g} (Round ${nextRound})`);
+  }
+}
+
+// 🔹 Atualiza campeões de grupo quando um grupo termina totalmente
+function updateGroupChampions() {
+  const groupLabels = Object.keys(state.groupTables || {});
+  for (const g of groupLabels) {
+    const gMatches = state.matches
+      .filter((m: any) => m.phase === "elimination" && m.group === g)
+      .sort((a: any, b: any) => a.round - b.round);
+
+    if (gMatches.length === 0) continue;
+
+    const rounds = [...new Set(gMatches.map((m: any) => m.round))].sort((a, b) => a - b);
+    const lastRound = rounds[rounds.length - 1];
+    const lastRoundMatches = gMatches.filter((m: any) => m.round === lastRound);
+
+    // Se o último round ainda não terminou, pula
+    const allFinished = lastRoundMatches.every((m: any) => m.finished);
+    if (!allFinished) continue;
+
+    // Se já temos campeão, pula
+    const alreadyHas = state.groupTables[g].some((r: any) => r.isChampion);
+    if (alreadyHas) continue;
+
+    // Define o campeão
+    const winners = lastRoundMatches.filter((m: any) => m.winner).map((m: any) => m.winner);
+    if (winners.length === 1) {
+      const champ = winners[0];
+      const table = state.groupTables[g];
+      for (const r of table) r.isChampion = r.robotId === champ.id;
+      console.log(`🏅 Campeão do grupo ${g}: ${champ.name}`);
+    }
+  }
+
+  broadcast("UPDATE_STATE", { state });
+}
 
 /* ------------------ ELIMINATÓRIAS ------------------ */
 function generateEliminationFromGroups() {
@@ -464,66 +584,6 @@ function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup 
   broadcast("UPDATE_STATE", { state });
 }
 
-function generateEliminationBracket() {
-  const groupTables = state.groupTables;
-  const advancePerGroup = (state as any).advancePerGroup || 2;
-
-  // 1️⃣ Coleta os classificados de cada grupo
-  const qualified: any[] = [];
-  for (const g in groupTables) {
-    const sorted = [...groupTables[g]].sort((a, b) => b.pts - a.pts);
-    const top = sorted.slice(0, advancePerGroup);
-    top.forEach((r) => {
-      const robot = state.robots.find((rob) => rob.id === r.robotId);
-      if (robot) qualified.push(robot);
-    });
-  }
-
-  if (qualified.length < 2) {
-    console.log("⚠️ Robôs insuficientes para o mata-mata.");
-    return;
-  }
-
-  // 2️⃣ Embaralha e completa com BYEs até potência de 2
-  const shuffled = [...qualified].sort(() => Math.random() - 0.5);
-  const powerOfTwo = (n: number) => {
-    let p = 1;
-    while (p < n) p <<= 1;
-    return p;
-  };
-  const size = powerOfTwo(shuffled.length);
-  const BYE = { id: "bye", name: "BYE", team: "", image: "" };
-  while (shuffled.length < size) shuffled.push(BYE);
-
-  // 3️⃣ Cria as partidas da primeira fase (oitavas/quartas/semis)
-  const matches = [];
-  for (let i = 0; i < shuffled.length; i += 2) {
-    const A = shuffled[i];
-    const B = shuffled[i + 1];
-    const isBye = A.id === "bye" || B.id === "bye";
-    const winner = isBye ? (A.id !== "bye" ? A : B) : null;
-
-    matches.push({
-      id: crypto.randomUUID(),
-      phase: "elimination",
-      round: 1,
-      robotA: A.id !== "bye" ? A : null,
-      robotB: B.id !== "bye" ? B : null,
-      scoreA: isBye && winner?.id === A.id ? 33 : 0,
-      scoreB: isBye && winner?.id === B.id ? 33 : 0,
-      winner: isBye ? winner : null,
-      finished: isBye,
-      type: isBye ? "WO" : "normal",
-    });
-  }
-
-  // 4️⃣ Anexa ao state e propaga
-  state.matches.push(...matches);
-  broadcast("UPDATE_STATE", { state });
-  console.log("🏆 Fase de mata-mata criada!");
-}
-
-
 /* ------------------ INÍCIO DE LUTA ------------------ */
 function startMatch(id: string) {
   const match = state.matches.find((m) => m.id === id);
@@ -644,14 +704,21 @@ app.post("/matches/:id/judges", (req, res) => {
 
   if (allGroupsFinished) {
     generateGroupEliminations();
-    // Se todos os grupos já têm campeões, gera o mata-mata final
-    generateGrandFinal();
-
   }
 
   // Atualiza o estado global
   broadcast("UPDATE_STATE", { state });
-  console.log(match);
+
+  // Avança os rounds internos de cada grupo automaticamente
+  progressGroupEliminations();
+
+  // Atualiza campeões de grupo quando todos os rounds internos terminam
+  updateGroupChampions();
+
+
+  // Quando todos os grupos tiverem campeões, gera a fase final
+  checkAndGenerateGrandFinal();
+
 
   // Responde com o resultado do combate
   res.json({ ok: true, result: match });

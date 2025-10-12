@@ -493,6 +493,70 @@ const gerarMataMata = async () => {
             ))}
         </div>
       ))}
+
+      {/* ---------- FASE FINAL ENTRE CAMPEÕES ---------- */}
+      {(state.matches || []).some(
+        (m: any) => m.phase === "elimination" && !m.group
+      ) && (
+        <div className="mt-16">
+          <h2 className="text-2xl font-bold mb-4 text-center text-yellow-400">
+            🏆 Fase Final — Campeões dos Grupos
+          </h2>
+
+          {(state.matches || [])
+            .filter((m: any) => m.phase === "elimination" && !m.group)
+            .sort((a: any, b: any) => a.round - b.round)
+            .map((m: any) => (
+              <div
+                key={m.id}
+                className={`flex justify-between items-center bg-white/10 rounded-lg p-3 mb-2 transition-all ${
+                    m.finished === false && state.currentMatchId === m.id
+                    ? "border-2 border-yellow-400 shadow-[0_0_15px_#FFD700] animate-pulse"
+                    : "border-l-4 border-transparent"
+                }`}
+              >
+                <span className="font-semibold">
+                  {m.robotA?.name ?? "?"}{" "}
+                  <span className="text-arena-accent">vs</span>{" "}
+                  {m.robotB?.name ?? "?"}
+                </span>
+
+                {m.finished ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-yellow-400 font-semibold">
+                      {m.winner
+                        ? `Vencedor: ${m.winner.name} ${
+                            m.type === "KO"
+                              ? "(K.O)"
+                              : m.type === "WO"
+                              ? "(W.O)"
+                              : ""
+                          }`
+                        : "Empate"}
+                    </span>
+                    <span className="font-bold text-arena-accent">
+                      {m.scoreA} - {m.scoreB}
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => iniciarCombate(m.id)}
+                    disabled={state.currentMatchId === m.id}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold transition ${
+                      state.currentMatchId === m.id
+                        ? "bg-yellow-400/30 text-yellow-200 cursor-not-allowed"
+                        : "bg-arena-accent text-black hover:opacity-90"
+                    }`}
+                  >
+                    <Play size={14} />
+                    {state.currentMatchId === m.id ? "Em andamento" : "Iniciar Luta"}
+                  </button>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+
     </div>
   );
 }
