@@ -125,11 +125,7 @@ if (current.finished) {
       <div className="mt-4 flex flex-wrap justify-center gap-3">
         {/* Botão único de iniciar/pausar 3min */}
         <button
-          className={`btn flex items-center gap-2 ${
-            state.mainStatus === "running"
-              ? "bg-yellow-400 text-black hover:bg-yellow-300"
-              : "btn-accent"
-          }`}
+          className={`btn flex items-center gap-2 btn-accent`}
           onClick={() => {
             if (state.mainStatus === "running") send("PAUSE_MAIN");
             else if (state.mainTimer > 0 && state.mainTimer < 180)
@@ -152,11 +148,7 @@ if (current.finished) {
 
         {/* Botão único de iniciar/pausar 10s */}
         <button
-          className={`btn flex items-center gap-2 ${
-            isRecRunning
-              ? "bg-yellow-400 text-black hover:bg-yellow-300"
-              : "btn-danger"
-          }`}
+          className={`btn flex items-center gap-2 btn-danger`}
           onClick={() => {
             if (isRecRunning) {
               // Está contando → pausar
@@ -173,6 +165,7 @@ if (current.finished) {
             }
           }}
         >
+          {isRecRunning ? <Pause size={16} /> : <Play size={16} />}
           {isRecRunning ? "Pausar 10s" : "Iniciar 10s"}
         </button>
 
