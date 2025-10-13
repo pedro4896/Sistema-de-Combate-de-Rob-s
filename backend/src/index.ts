@@ -21,6 +21,7 @@ let state: ArenaState = {
   mainStatus: "idle",
   recoveryTimer: 0,
   recoveryActive: false,
+  recoveryPaused: false,
   winner: null,
   lastWinner: null,
   ranking: [],
@@ -83,28 +84,43 @@ function startMainTimer(seconds = 180) {
   }, 1000);
 }
 
-function startRecoveryTimer(seconds = 10) {
-  if (state.mainStatus === "running") {
+function startRecoveryTimer(seconds = 10, resume = false) {
+  // se for uma retomada, não pausar o cronômetro principal
+  if (!resume && state.mainStatus === "running") {
     state.mainStatus = "paused";
     if (mainTick) clearInterval(mainTick);
   }
+
+  // sempre visível
+  if (recoveryTick) clearInterval(recoveryTick);
   state.recoveryActive = true;
+  state.recoveryPaused = false; // 👈 garante que retome corretamente
   state.recoveryTimer = seconds;
   broadcast("UPDATE_STATE", { state });
 
   recoveryTick = setInterval(() => {
-    if (!state.recoveryActive) return;
+    // se pausado, não faz nada
+    if (state.recoveryPaused) return;
+
+    // decrementa o tempo
     state.recoveryTimer = Math.max(0, state.recoveryTimer - 1);
     broadcast("UPDATE_STATE", { state });
 
+    // quando chega a zero
     if (state.recoveryTimer === 0) {
       clearInterval(recoveryTick!);
-      state.recoveryActive = false;
+      state.recoveryActive = true; // mantém visível com 0
+      state.recoveryPaused = false;
+      broadcast("UPDATE_STATE", { state });
+
+      // retoma o cronômetro principal se ainda houver tempo
       if (state.mainTimer > 0) startMainTimer(state.mainTimer);
       else endMatchNow();
     }
   }, 1000);
 }
+
+
 
 function endMatchNow() {
   stopAllTimers();
@@ -878,12 +894,73 @@ wss.on("connection", (ws) => {
     try {
       const { type, payload } = JSON.parse(String(raw));
       switch (type) {
-        case "START_MAIN": startMainTimer(payload?.seconds ?? 180); break;
-        case "PAUSE_MAIN": state.mainStatus = "paused"; break;
-        case "RESUME_MAIN": if (state.mainTimer > 0) startMainTimer(state.mainTimer); break;
-        case "RESET_MAIN": resetTimers(); broadcast("UPDATE_STATE", { state }); break;
-        case "START_RECOVERY": startRecoveryTimer(payload?.seconds ?? 10); break;
-        case "END_MATCH": endMatchNow(); break;
+        case "START_MAIN":
+          // Sempre zera o timer de recuperação ao iniciar o principal
+          if (recoveryTick) clearInterval(recoveryTick);
+          state.recoveryTimer = 10;
+          state.recoveryActive = false;   // some da tela
+          state.recoveryPaused = false;
+
+          startMainTimer(180);
+          broadcast("UPDATE_STATE", { state });
+          break;
+
+
+        case "PAUSE_MAIN":
+          if (mainTick) clearInterval(mainTick);
+          state.mainStatus = "paused";
+          broadcast("UPDATE_STATE", { state });
+          break;
+
+        case "RESUME_MAIN":
+          // Sempre zera o timer de recuperação ao iniciar o principal
+          if (recoveryTick) clearInterval(recoveryTick);
+          state.recoveryTimer = 10;
+          state.recoveryActive = false;   // some da tela
+          state.recoveryPaused = false;
+
+          if (state.mainTimer > 0) {
+            startMainTimer(state.mainTimer);
+          }
+          break;
+
+        case "RESET_MAIN":
+          if (mainTick) clearInterval(mainTick);
+          state.mainTimer = 180;
+          state.mainStatus = "idle";
+          broadcast("UPDATE_STATE", { state });
+          break;
+
+        case "START_RECOVERY":
+          startRecoveryTimer(payload?.seconds ?? 10);
+          break;
+
+        case "PAUSE_RECOVERY":
+          state.recoveryPaused = true;  // pausa contagem, mantém visível
+          broadcast("UPDATE_STATE", { state });
+          break;
+
+        case "RESUME_RECOVERY":
+          if (state.recoveryTimer > 0) {
+            state.recoveryPaused = false;
+            // Reinicia o loop se o contador estiver pausado
+            startRecoveryTimer(state.recoveryTimer, true);
+          }
+          break;
+
+
+        case "RESET_RECOVERY":
+          if (recoveryTick) clearInterval(recoveryTick);
+          state.recoveryTimer = 10;
+          state.recoveryActive = false;   // some da tela
+          state.recoveryPaused = false;
+          broadcast("UPDATE_STATE", { state });
+          break;
+
+
+        case "END_MATCH":
+          endMatchNow();
+          break;
       }
     } catch {}
   });

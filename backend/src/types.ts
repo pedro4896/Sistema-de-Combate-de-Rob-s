@@ -53,6 +53,7 @@ export interface ArenaState {
   mainTimer: number;
   mainStatus: MainStatus;
   recoveryTimer: number;
+  recoveryPaused: boolean,
   recoveryActive: boolean;
 
   // winners

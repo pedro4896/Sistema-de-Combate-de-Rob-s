@@ -7,6 +7,11 @@ import { Bot } from "lucide-react";
 export default function Judge() {
   const [state, setState] = useState<any>(null);
 
+  const recTime = state?.recoveryTimer ?? 0;
+  const isRecRunning = !!state?.recoveryActive && !state?.recoveryPaused && recTime > 0;
+
+
+
   useEffect(() => {
     api("/state").then((r) => setState(r.state));
     return onMessage((m) => m.type === "UPDATE_STATE" && setState(m.payload.state));
@@ -56,7 +61,9 @@ if (current.finished) {
 
   const mm = String(Math.floor((state.mainTimer || 0) / 60)).padStart(2, "0");
   const ss = String((state.mainTimer || 0) % 60).padStart(2, "0");
-  const rec = state.recoveryActive ? state.recoveryTimer : 0;
+  const rec = state.recoveryTimer ?? 0;
+
+  
 
   const renderRobotImage = (robot: Robot, color: string) => {
   // Verifica se o robô tem imagem e exibe
@@ -102,74 +109,98 @@ if (current.finished) {
         </div>
       </div>
 
-      {/* Timers e Controles */}
-      <div className="card text-center">
-        <div className="sub uppercase">Timer principal (3min)</div>
-        <div className="timer">{mm}:{ss}</div>
+    {/* Timers e Controles */}
+    <div className="card text-center">
+      <div className="sub uppercase">Timer principal (3min)</div>
+      <div className="timer">{mm}:{ss}</div>
 
-        {state.recoveryActive && (
-          <div className="mt-2 text-xl">
-            Recuperação: <span className="font-extrabold text-arena-danger">{rec}s</span>
-          </div>
-        )}
-
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {/* Iniciar/Reiniciar principal em 180s */}
-          <button
-            className="btn btn-accent flex items-center gap-2"
-            onClick={() => send("START_MAIN", { seconds: 180 })}
-            title="Inicia o cronômetro principal em 3min"
-          >
-            <Play size={16} /> Iniciar 3min
-          </button>
-
-          {/* Pausar principal */}
-          <button
-            className="btn flex items-center gap-2"
-            onClick={() => send("PAUSE_MAIN")}
-          >
-            <Pause size={16} /> Pausar
-          </button>
-
-          {/* Retomar principal de onde parou */}
-          <button
-            className="btn flex items-center gap-2"
-            onClick={() => send("RESUME_MAIN")}
-          >
-            <RotateCcw size={16} /> Retomar 3min
-          </button>
-
-          {/* Reset total do cronômetro principal (zera e volta para idle) */}
-          <button
-            className="btn flex items-center gap-2"
-            onClick={() => send("RESET_MAIN", { seconds: 180 })}
-            title="Zera e volta para 3:00 parado"
-          >
-            <RotateCcw size={16} /> Resetar 3min
-          </button>
-
-          {/* Iniciar recuperação 10s (pausa 3min automaticamente e retoma ao terminar) */}
-          <button
-            className="btn btn-danger flex items-center gap-2"
-            onClick={() => send("START_RECOVERY", { seconds: 10 })}
-            title="Pausa 3min e inicia 10s; ao acabar, 3min retoma"
-          >
-            <AlarmClock size={16} /> Iniciar 10s
-          </button>
-
-          {/* Encerrar luta imediatamente */}
-          <button
-            className="btn btn-danger flex items-center gap-2"
-            onClick={() => send("END_MATCH")}
-          >
-            <OctagonX size={16} /> Encerrar Luta
-          </button>
-        </div>
-
-        <div className="mt-2 sub">
-          Status: {state.mainStatus} {state.recoveryActive ? " | recovery" : ""}
-        </div>
+      <div className="mt-4 text-xl">
+        Recuperação:{" "}
+        <span className="font-extrabold text-arena-danger">
+          {(state.recoveryTimer ?? 0)}s {state.recoveryPaused ? "(Pausado)" : ""}
+        </span>
       </div>
+
+
+      <div className="mt-4 flex flex-wrap justify-center gap-3">
+        {/* Botão único de iniciar/pausar 3min */}
+        <button
+          className={`btn flex items-center gap-2 ${
+            state.mainStatus === "running"
+              ? "bg-yellow-400 text-black hover:bg-yellow-300"
+              : "btn-accent"
+          }`}
+          onClick={() => {
+            if (state.mainStatus === "running") send("PAUSE_MAIN");
+            else if (state.mainTimer > 0 && state.mainTimer < 180)
+              send("RESUME_MAIN");
+            else send("START_MAIN", { seconds: 180 });
+          }}
+        >
+          {state.mainStatus === "running" ? <Pause size={16} /> : <Play size={16} />}
+          {state.mainStatus === "running" ? "Pausar 3min" : "Iniciar 3min"}
+        </button>
+
+        {/* Reset 3min */}
+        <button
+          className="btn flex items-center gap-2"
+          onClick={() => send("RESET_MAIN", { seconds: 180 })}
+          title="Zera e volta para 3:00 parado"
+        >
+          <RotateCcw size={16} /> Resetar 3min
+        </button>
+
+        {/* Botão único de iniciar/pausar 10s */}
+        <button
+          className={`btn flex items-center gap-2 ${
+            isRecRunning
+              ? "bg-yellow-400 text-black hover:bg-yellow-300"
+              : "btn-danger"
+          }`}
+          onClick={() => {
+            if (isRecRunning) {
+              // Está contando → pausar
+              send("PAUSE_RECOVERY");
+            } else {
+              // Não está contando → iniciar (novo) OU retomar
+              if (!state.recoveryActive || recTime === 0) {
+                // nunca iniciou / terminou / resetou
+                send("START_RECOVERY", { seconds: 10 });
+              } else {
+                // pausado com tempo restante
+                send("RESUME_RECOVERY");
+              }
+            }
+          }}
+        >
+          {isRecRunning ? "Pausar 10s" : "Iniciar 10s"}
+        </button>
+
+
+
+        {/* Reset 10s */}
+        <button
+          className="btn flex items-center gap-2"
+          onClick={() => send("RESET_RECOVERY", { seconds: 10 })}
+          title="Zera o cronômetro de 10 segundos"
+        >
+          <RotateCcw size={16} /> Resetar 10s
+        </button>
+
+        {/* Encerrar luta */}
+        <button
+          className="btn btn-danger flex items-center gap-2"
+          onClick={() => send("END_MATCH")}
+        >
+          <OctagonX size={16} /> Encerrar Luta
+        </button>
+      </div>
+
+      <div className="mt-3 sub">
+        Status: {state.mainStatus || "idle"}{" "}
+        {state.recoveryActive ? " | recovery" : ""}
+      </div>
+    </div>
 
       {/* Dica fluxo */}
       <div className="sub">
