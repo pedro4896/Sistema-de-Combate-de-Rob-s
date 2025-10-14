@@ -4,6 +4,16 @@ import { createServer } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
 import { ArenaState, Robot, Match, GroupTableItem } from "./types";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
+
+const SECRET_KEY = "arena_secret_2025";
+
+const adminUser = {
+  username: "admin",
+  passwordHash: bcrypt.hashSync("123456", 8),
+  role: "admin",
+};
 
 const app = express();
 app.use(cors());
@@ -120,13 +130,22 @@ function startRecoveryTimer(seconds = 10, resume = false) {
   }, 1000);
 }
 
-
-
 function endMatchNow() {
   stopAllTimers();
   state.mainStatus = "finished";
   state.recoveryActive = false;
   broadcast("UPDATE_STATE", { state });
+}
+
+function authenticateToken(req, res, next) {
+  const token = req.headers["authorization"]?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Sem token" });
+  try {
+    jwt.verify(token, SECRET_KEY);
+    next();
+  } catch {
+    res.status(403).json({ error: "Token inválido" });
+  }
 }
 
 /* ------------------ CHAVEAMENTO DINÂMICO ------------------ */
@@ -269,9 +288,6 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
   }
   return out;
 }
-
-
-
 
 // 🔹 Gera eliminação dentro de cada grupo (oitavas / quartas / semi / final do grupo)
 function generateGroupEliminations() {
@@ -638,63 +654,18 @@ function startMatch(id: string) {
 }
 
 /* ------------------ ENDPOINTS ------------------ */
+app.post("/auth/login", (req, res) => {
+  const { username, password } = req.body;
+  if (username !== adminUser.username) return res.status(401).json({ error: "Usuário incorreto" });
+  if (!bcrypt.compareSync(password, adminUser.passwordHash))
+    return res.status(401).json({ error: "Senha incorreta" });
+
+  const token = jwt.sign({ role: "admin" }, SECRET_KEY, { expiresIn: "6h" });
+  res.json({ token });
+});
+
+// 🔓 Rotas públicas
 app.get("/state", (_req, res) => res.json({ state }));
-
-app.post("/robots", (req, res) => {
-  const { name, team, image, score } = req.body;
-  const robot: Robot = { id: uuidv4(), name, team, image, score: score || 0 };
-  state.robots.push(robot);
-  broadcast("UPDATE_STATE", { state });
-  res.json(robot);
-});
-
-app.post("/matches/generate", (req, res) => {
-  let { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
-  const total = state.robots.length;
-  groupCount = Math.max(1, Math.min(groupCount, total));
-  robotsPerGroup = Math.max(2, robotsPerGroup);
-  advancePerGroup = Math.max(1, advancePerGroup);
-  generateTournament(groupCount, robotsPerGroup, advancePerGroup);
-  res.json({ ok: true });
-});
-
-app.post("/matches/elimination", (req, res) => {
-  const { matches } = req.body;
-  state.matches.push(...matches);
-  broadcast("UPDATE_STATE", { state });
-  res.json({ ok: true });
-});
-
-app.post("/matches/:id/start", (req, res) => {
-  startMatch(req.params.id);
-  res.json({ ok: true });
-});
-
-app.post("/matches/:id/result", (req, res) => {
-  const { scoreA, scoreB } = req.body;
-  finalizeMatch(req.params.id, Number(scoreA), Number(scoreB));
-  res.json({ ok: true });
-});
-
-app.post("/arena/reset", (_req, res) => {
-  stopAllTimers();
-  state = {
-    robots: [],
-    matches: [],
-    currentMatchId: null,
-    mainTimer: 0,
-    mainStatus: "idle",
-    recoveryTimer: 0,
-    recoveryActive: false,
-    winner: null,
-    lastWinner: null,
-    ranking: [],
-    groupTables: {}
-  };
-  broadcast("UPDATE_STATE", { state });
-  res.json({ ok: true });
-});
-
 app.get("/ranking", (_req, res) => {
   // Mapeia robôs atualizados
   const robotMap = Object.fromEntries(state.robots.map(r => [r.id, r]));
@@ -786,6 +757,63 @@ app.get("/ranking", (_req, res) => {
 });
 
 
+// 🔒 Rotas protegidas (somente admin autenticado)
+app.use(authenticateToken);
+
+app.post("/robots", (req, res) => {
+  const { name, team, image, score } = req.body;
+  const robot: Robot = { id: uuidv4(), name, team, image, score: score || 0 };
+  state.robots.push(robot);
+  broadcast("UPDATE_STATE", { state });
+  res.json(robot);
+});
+
+app.post("/matches/generate", (req, res) => {
+  let { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
+  const total = state.robots.length;
+  groupCount = Math.max(1, Math.min(groupCount, total));
+  robotsPerGroup = Math.max(2, robotsPerGroup);
+  advancePerGroup = Math.max(1, advancePerGroup);
+  generateTournament(groupCount, robotsPerGroup, advancePerGroup);
+  res.json({ ok: true });
+});
+
+app.post("/matches/elimination", (req, res) => {
+  const { matches } = req.body;
+  state.matches.push(...matches);
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true });
+});
+
+app.post("/matches/:id/start", (req, res) => {
+  startMatch(req.params.id);
+  res.json({ ok: true });
+});
+
+app.post("/matches/:id/result", (req, res) => {
+  const { scoreA, scoreB } = req.body;
+  finalizeMatch(req.params.id, Number(scoreA), Number(scoreB));
+  res.json({ ok: true });
+});
+
+app.post("/arena/reset", (_req, res) => {
+  stopAllTimers();
+  state = {
+    robots: [],
+    matches: [],
+    currentMatchId: null,
+    mainTimer: 0,
+    mainStatus: "idle",
+    recoveryTimer: 0,
+    recoveryActive: false,
+    winner: null,
+    lastWinner: null,
+    ranking: [],
+    groupTables: {}
+  };
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true });
+});
 
 app.post("/matches/:id/judges", (req, res) => {
   const match = state.matches.find((m) => m.id === req.params.id);

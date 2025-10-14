@@ -68,7 +68,7 @@ export default function Screen() {
       {/* TIMER CENTRAL */}
       <div className="text-7xl md:text-8xl font-black tracking-widest text-arena-accent drop-shadow-lg">
         {state.recoveryActive
-          ? `RECOVERY ${rec}s`
+          ? `Recuperação ${rec}s`
           : `${mm}:${ss}`}
       </div>
 
