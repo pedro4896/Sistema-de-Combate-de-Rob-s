@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -29,6 +28,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
       localStorage.setItem("token", data.token);
       setLoading(false);
       onLogin();
+      window.location.href = "/"; // Força reload para atualizar estado de login
     } catch {
       setError("Erro ao conectar com o servidor");
       setLoading(false);

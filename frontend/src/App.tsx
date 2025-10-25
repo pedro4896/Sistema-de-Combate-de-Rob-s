@@ -6,13 +6,14 @@ import Scores from "./pages/Scores";
 import Screen from "./pages/Screen";
 import Ranking from "./pages/Ranking";
 import Login from "./pages/Login";
+import Landing from "./pages/Landing";
 
-import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut } from "lucide-react";
+import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut, Home } from "lucide-react";
 
 export default function App() {
   const [tab, setTab] = useState<
-    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login"
-  >("ranking");
+    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing"
+  >("landing");
 
   const [isLogged, setIsLogged] = useState(!!localStorage.getItem("token"));
 
@@ -48,6 +49,7 @@ export default function App() {
 
           <div className="ml-auto flex flex-wrap items-center">
             {/* Páginas públicas */}
+            <Tab id="landing" icon={<Home size={18} />} label="Início" />
             <Tab id="ranking" icon={<Trophy size={18} />} label="Ranking" />
             <Tab id="screen" icon={<MonitorPlay size={18} />} label="Telão" />
 
@@ -81,13 +83,15 @@ export default function App() {
                 <span className="hidden sm:inline">Sair</span>
               </button>
             )}
-
           </div>
         </div>
       </header>
 
       {/* ======= CONTEÚDO ======= */}
       <main className="max-w-6xl mx-auto px-4 py-6">
+        {/* Página Landing */}
+        {tab === "landing" && <Landing />}
+
         {/* Páginas públicas */}
         {tab === "ranking" && <Ranking />}
         {tab === "screen" && <Screen />}
