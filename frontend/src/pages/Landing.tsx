@@ -5,7 +5,7 @@ export default function Landing() {
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center justify-center px-6 text-center">
       {/* LOGO */}
       <h1 className="text-5xl font-extrabold mb-4 tracking-widest">
-        ARENA<span className="text-arena-accent">.v3</span>
+        Spectro<span className="text-arena-accent">Clash</span>
       </h1>
       <p className="text-lg text-white/80 max-w-lg mb-10">
         Bem-vindo ao sistema de gerenciamento de batalhas de robôs. A Arena v3

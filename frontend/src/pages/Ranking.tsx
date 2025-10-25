@@ -59,13 +59,13 @@ export default function Ranking() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center p-10">
-      <h1 className="text-4xl font-extrabold flex items-center gap-3 mb-10 text-yellow-400">
-        <Trophy className="text-yellow-400" size={40} /> Ranking Geral de Robôs
+      <h1 className="text-4xl font-extrabold flex items-center gap-3 mb-10 text-arena-accent">
+        <Trophy className="text-arena-accent" size={40} /> Ranking Geral de Robôs
       </h1>
 
       <div className="w-full max-w-5xl overflow-x-auto rounded-xl shadow-lg bg-white/10 backdrop-blur-md border border-white/20">
         <table className="w-full text-sm text-center border-collapse">
-          <thead className="bg-white/10 text-yellow-400">
+          <thead className="bg-white/10 text-arena-accent">
             <tr>
               <th className="py-3">#</th>
               <th className="text-left pl-3">Robô</th>
@@ -90,7 +90,7 @@ export default function Ranking() {
                 <tr
                   key={r.robotId}
                   className={`border-b border-white/10 hover:bg-white/5 transition ${
-                    i === 0 ? "text-yellow-300 font-bold" : "text-white/90"
+                    i === 0 ? "text-arena-accent font-bold" : "text-white/90"
                   }`}
                 >
                   <td className="py-3">{i + 1}</td>

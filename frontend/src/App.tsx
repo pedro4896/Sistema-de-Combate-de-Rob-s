@@ -43,11 +43,22 @@ export default function App() {
       {/* ======= HEADER ======= */}
       <header className="sticky top-0 z-30 backdrop-blur bg-black/30 border-b border-white/10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-2">
-          <h1 className="text-xl font-extrabold tracking-widest">
-            ARENA<span className="text-arena-accent">.v3</span>
+          {/* LOGO E NOME ALINHADOS NA HORIZONTAL */}
+          <div className="flex items-center gap-2">
+            <a href="https://www.instagram.com/equipe_spectron" target="_blank">
+              <img
+                src="/logoSpectron.svg" // Caminho correto para a imagem dentro da pasta public
+                alt="Logo Spectron"
+                className="w-20 h-20 object-contain" // Ajuste o tamanho e margem à direita
+              />
+            </a>
+          <h1 className="text-2xl font-extrabold tracking-widest">
+            Spectro<span className="text-arena-accent">Clash</span>
           </h1>
+          </div>
 
-          <div className="ml-auto flex flex-wrap items-center">
+          {/* NAVEGAÇÃO */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             {/* Páginas públicas */}
             <Tab id="landing" icon={<Home size={18} />} label="Início" />
             <Tab id="ranking" icon={<Trophy size={18} />} label="Ranking" />
@@ -63,7 +74,7 @@ export default function App() {
               </>
             )}
 
-            {/* Botões de Login / Sair (iguais aos outros) */}
+            {/* Botões de Login / Sair */}
             {!isLogged ? (
               <Tab id="login" icon={<LogIn size={16} />} label="Login" />
             ) : (
@@ -86,6 +97,7 @@ export default function App() {
           </div>
         </div>
       </header>
+
 
       {/* ======= CONTEÚDO ======= */}
       <main className="max-w-6xl mx-auto px-4 py-6">
