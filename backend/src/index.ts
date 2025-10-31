@@ -6,8 +6,10 @@ import { v4 as uuidv4 } from "uuid";
 import { ArenaState, Robot, Match, GroupTableItem } from "./types";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { Client, QueryResult } from "pg"; // 👈 Importa o cliente PG
 
-const SECRET_KEY = "arena_secret_2025";
+const SECRET_KEY = process.env.ARENA_SECRET || "arena_secret_2025";
+const PORT = Number(process.env.PORT || 8080);
 
 const adminUser = {
   username: "admin",
@@ -20,10 +22,11 @@ app.use(cors());
 app.use(express.json());
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
-const PORT = Number(process.env.PORT || 8080);
 
-/* ------------------ ESTADO GLOBAL ------------------ */
-let state: ArenaState = {
+/* ------------------ ESTADO GLOBAL E DB ------------------ */
+
+// Estado inicial padrão (fallback)
+const defaultState: ArenaState = {
   robots: [],
   matches: [],
   currentMatchId: null,
@@ -38,7 +41,117 @@ let state: ArenaState = {
   groupTables: {}
 };
 
-/* ------------------ UTILITÁRIOS ------------------ */
+// Variável para armazenar o estado em memória e a conexão DB
+let state: ArenaState = defaultState;
+let dbClient: Client | null = null;
+
+// Função para salvar o estado atual no PostgreSQL
+async function saveState() {
+  if (!dbClient) return;
+  try {
+    const payload = JSON.stringify(state);
+    const sql = `
+      INSERT INTO arena_state (id, data)
+      VALUES (1, $1)
+      ON CONFLICT (id) DO UPDATE
+      SET data = $1, updated_at = NOW();
+    `;
+    await dbClient.query(sql, [payload]);
+  } catch (error) {
+    console.error("❌ Erro ao salvar estado no DB:", error);
+  }
+}
+
+// Função para carregar o estado do PostgreSQL
+async function loadState(): Promise<ArenaState> {
+  if (!dbClient) return defaultState;
+  try {
+    const res: QueryResult<{ data: ArenaState }> = await dbClient.query(
+      "SELECT data FROM arena_state WHERE id = 1"
+    );
+    if (res.rows.length > 0) {
+      console.log("✅ Estado carregado do banco de dados.");
+      return res.rows[0].data as ArenaState;
+    }
+  } catch (error) {
+    console.warn("⚠️ Tabela 'arena_state' não encontrada ou erro ao carregar. Tentando criar...");
+    // Cria a tabela se não existir (se a falha foi por tabela inexistente)
+    await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS arena_state (
+        id INT PRIMARY KEY,
+        data JSONB,
+        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+      );
+    `);
+    // Insere o estado inicial se não houver registros
+    await dbClient.query("INSERT INTO arena_state (id, data) VALUES (1, $1) ON CONFLICT DO NOTHING", [JSON.stringify(defaultState)]);
+    console.log("🛠️ Tabela 'arena_state' criada e inicializada.");
+  }
+  return defaultState;
+}
+
+// Função para recarregar o estado do DB e transmitir a todos os clientes
+async function loadStateFromDBAndBroadcast() {
+  state = await loadState();
+  broadcast("UPDATE_STATE", { state });
+  console.log("🔄 Estado recarregado do banco de dados e transmitido.");
+}
+
+
+// Inicialização e Conexão ao DB
+async function initDBAndServer() {
+  // Configuração do cliente PG com fallbacks para rodar localmente
+  const POSTGRES_HOST = process.env.POSTGRES_HOST || "localhost"; 
+  const POSTGRES_PORT = Number(process.env.POSTGRES_PORT || 5432); 
+  const POSTGRES_USER = process.env.POSTGRES_USER || "postgres"; 
+  const POSTGRES_PASSWORD = process.env.POSTGRES_PASSWORD || "root";
+  const POSTGRES_DB = process.env.POSTGRES_DB || "arenaCombate";
+
+  const connectionConfig = {
+    host: POSTGRES_HOST,
+    port: POSTGRES_PORT,
+    user: POSTGRES_USER,
+    password: POSTGRES_PASSWORD,
+    database: POSTGRES_DB,
+  };
+  
+  // Agora usamos o objeto de configuração, que é mais seguro do que a concatenação manual de strings com variáveis indefinidas.
+  dbClient = new Client(connectionConfig); 
+  
+  try {
+    await dbClient.connect();
+    console.log("✅ Conectado ao PostgreSQL");
+
+    // Tenta carregar o estado
+    state = await loadState();
+    if (state === defaultState) {
+      // Se carregou o estado padrão (porque não havia registro), salva ele no banco
+      await saveState(); 
+    }
+
+    // Inicia o servidor Express e WebSocket
+    server.listen(PORT, () =>
+      console.log(`✅ Arena backend rodando @${PORT}`)
+    );
+
+  } catch (error) {
+    console.error("❌ Falha ao conectar ao PostgreSQL:", error);
+    process.exit(1); // Sai do processo se a conexão falhar
+  }
+}
+
+// Chama a função de inicialização
+initDBAndServer();
+
+/* ------------------ UTILITÁRIOS & FUNÇÕES CORE ------------------ */
+
+// Adapta a função broadcast para também salvar o estado
+function broadcastAndSave(type: string, payload: any) {
+  broadcast(type, payload);
+  saveState(); // Salva após qualquer alteração que dispara broadcast
+}
+
 function broadcast(type: string, payload: any) {
   const msg = JSON.stringify({ type, payload });
   for (const c of wss.clients)
@@ -71,6 +184,7 @@ function resetTimers() {
   state.recoveryTimer = 0;
   state.mainStatus = "idle";
   state.recoveryActive = false;
+  state.recoveryPaused = false;
 }
 
 function setCurrentMatch(id: string | null) {
@@ -78,52 +192,46 @@ function setCurrentMatch(id: string | null) {
   resetTimers();
   state.mainStatus = "idle";
   if (id) state.winner = null;
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
 function startMainTimer(seconds = 180) {
   stopAllTimers();
   state.mainTimer = seconds;
   state.mainStatus = "running";
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   mainTick = setInterval(() => {
     if (state.mainStatus !== "running") return;
     state.mainTimer = Math.max(0, state.mainTimer - 1);
-    broadcast("UPDATE_STATE", { state });
+    broadcastAndSave("UPDATE_STATE", { state });
     if (state.mainTimer === 0) endMatchNow();
   }, 1000);
 }
 
 function startRecoveryTimer(seconds = 10, resume = false) {
-  // se for uma retomada, não pausar o cronômetro principal
   if (!resume && state.mainStatus === "running") {
     state.mainStatus = "paused";
     if (mainTick) clearInterval(mainTick);
   }
 
-  // sempre visível
   if (recoveryTick) clearInterval(recoveryTick);
   state.recoveryActive = true;
-  state.recoveryPaused = false; // 👈 garante que retome corretamente
+  state.recoveryPaused = false;
   state.recoveryTimer = seconds;
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 
   recoveryTick = setInterval(() => {
-    // se pausado, não faz nada
     if (state.recoveryPaused) return;
 
-    // decrementa o tempo
     state.recoveryTimer = Math.max(0, state.recoveryTimer - 1);
-    broadcast("UPDATE_STATE", { state });
+    broadcastAndSave("UPDATE_STATE", { state });
 
-    // quando chega a zero
     if (state.recoveryTimer === 0) {
       clearInterval(recoveryTick!);
-      state.recoveryActive = true; // mantém visível com 0
+      state.recoveryActive = true;
       state.recoveryPaused = false;
-      broadcast("UPDATE_STATE", { state });
+      broadcastAndSave("UPDATE_STATE", { state });
 
-      // retoma o cronômetro principal se ainda houver tempo
       if (state.mainTimer > 0) startMainTimer(state.mainTimer);
       else endMatchNow();
     }
@@ -134,10 +242,10 @@ function endMatchNow() {
   stopAllTimers();
   state.mainStatus = "finished";
   state.recoveryActive = false;
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
-function authenticateToken(req, res, next) {
+function authenticateToken(req: express.Request, res: express.Response, next: express.NextFunction) {
   const token = req.headers["authorization"]?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "Sem token" });
   try {
@@ -150,7 +258,6 @@ function authenticateToken(req, res, next) {
 
 /* ------------------ CHAVEAMENTO DINÂMICO ------------------ */
 
-// Divide robôs em grupos balanceados e evita grupos vazios ou de 1 robô
 function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup: number): Robot[][] {
   const shuffled = shuffle(robots);
   const groups: Robot[][] = Array.from({ length: groupCount }, () => []);
@@ -161,7 +268,6 @@ function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup
     gi = (gi + 1) % groupCount;
   }
 
-  // Ajuste se algum grupo tiver 1 robô
   const hasSingle = () => groups.some(g => g.length === 1);
   while (hasSingle()) {
     let largest = groups.reduce((a, b) => (a.length > b.length ? a : b));
@@ -173,22 +279,19 @@ function divideGroupsDynamic(robots: Robot[], groupCount: number, robotsPerGroup
   return groups.filter(g => g.length > 0);
 }
 
-// Todos contra todos (sem repetição)
 function generateGroupMatches(groups: Robot[][]): Match[] {
   const matches: Match[] = [];
 
   for (let gi = 0; gi < groups.length; gi++) {
-    const group = [...groups[gi]]; // cópia para manipular
-    const label = String.fromCharCode(65 + gi); // A, B, C...
+    const group = [...groups[gi]];
+    const label = String.fromCharCode(65 + gi);
     const n = group.length;
 
-    // se número ímpar, adiciona "bye" (folga)
     if (n % 2 !== 0) group.push({ id: "bye", name: "Folga" } as Robot);
 
     const totalRounds = group.length - 1;
     const half = group.length / 2;
 
-    // gera rodadas balanceadas
     for (let round = 0; round < totalRounds; round++) {
       const rodada: [Robot, Robot][] = [];
       for (let i = 0; i < half; i++) {
@@ -199,7 +302,6 @@ function generateGroupMatches(groups: Robot[][]): Match[] {
         }
       }
 
-      // adiciona as partidas dessa rodada
       for (const [A, B] of rodada) {
         matches.push({
           id: uuidv4(),
@@ -211,11 +313,11 @@ function generateGroupMatches(groups: Robot[][]): Match[] {
           scoreA: 0,
           scoreB: 0,
           winner: null,
-          finished: false
-        });
+          finished: false,
+          type: "normal"
+        } as Match);
       }
 
-      // rotaciona os robôs (exceto o primeiro)
       const fixed = group[0];
       const rest = group.slice(1);
       rest.unshift(rest.pop()!);
@@ -226,24 +328,19 @@ function generateGroupMatches(groups: Robot[][]): Match[] {
   return matches;
 }
 
-
-/* ------------------ TABELAS ------------------ */
 function makeItem(r: Robot): GroupTableItem {
-  return { robotId: r.id, name: r.name, team: r.team, pts: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, gd: 0 };
+  return { robotId: r.id, name: r.name, team: r.team, pts: 0, wins: 0, draws: 0, losses: 0, ko: 0, wo: 0 } as GroupTableItem;
 }
+
 
 function computeGroupTables(): Record<string, GroupTableItem[]> {
   const tables: Record<string, Record<string, GroupTableItem>> = {};
-
-  // Considera apenas as lutas de fase de grupos
   const groupMatches = state.matches.filter((m) => m.phase === "groups");
 
-  // Coleta todos os grupos existentes
   const groups = Array.from(
     new Set(groupMatches.map((m) => m.group).filter(Boolean))
   );
 
-  // Inicializa as tabelas de cada grupo
   for (const g of groups) tables[g] = {};
 
   for (const m of groupMatches) {
@@ -268,10 +365,10 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
 
     // Contabiliza KO e WO
     if (m.type === "KO" && m.winner) {
-      tables[g][m.winner.id].ko = (tables[g][m.winner.id].ko || 0) + 1;
+      tables[g][m.winner.id].ko = (tables[g][m.winner.id]?.ko || 0) + 1;
     }
     if (m.type === "WO" && m.winner) {
-      tables[g][m.winner.id].wo = (tables[g][m.winner.id].wo || 0) + 1;
+      tables[g][m.winner.id].wo = (tables[g][m.winner.id]?.wo || 0) + 1;
     }
   }
 
@@ -289,14 +386,13 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
   return out;
 }
 
-// 🔹 Gera eliminação dentro de cada grupo (oitavas / quartas / semi / final do grupo)
+
 function generateGroupEliminations() {
   const tables = computeGroupTables();
   state.groupTables = tables;
   const advancePerGroup = (state as any).advancePerGroup || 2;
 
   for (const g in tables) {
-    // evita recriar
     const already = state.matches.some(
       (m) => m.phase === "elimination" && m.group === g
     );
@@ -305,11 +401,10 @@ function generateGroupEliminations() {
     const top = tables[g].slice(0, advancePerGroup);
     const qualified = top
       .map((r) => state.robots.find((x) => x.id === r.robotId))
-      .filter(Boolean);
+      .filter(Boolean) as Robot[];
 
     if (qualified.length < 2) continue;
 
-    // embaralha e cria confrontos internos
     const shuffled = [...qualified].sort(() => Math.random() - 0.5);
     for (let i = 0; i < shuffled.length; i += 2) {
       const A = shuffled[i];
@@ -321,7 +416,7 @@ function generateGroupEliminations() {
         id: uuidv4(),
         phase: "elimination",
         round: 1,
-        group: g, // mata-mata do grupo
+        group: g,
         robotA: A,
         robotB: B || { id: "bye", name: "BYE", team: "", image: "" },
         scoreA: isBye ? 33 : 0,
@@ -329,44 +424,39 @@ function generateGroupEliminations() {
         winner,
         finished: !!isBye,
         type: isBye ? "WO" : "normal",
-      });
+      } as Match);
     }
   }
 
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   console.log("🏁 Eliminatórias internas dos grupos criadas!");
 }
 
-// 🔹 Gera o mata-mata final entre os campeões de cada grupo
-// 🔹 Verifica se todos os grupos já têm um campeão e cria a fase final
 function checkAndGenerateGrandFinal() {
   const groupLabels = Object.keys(state.groupTables || {});
   if (groupLabels.length === 0) return;
 
-  const champions: any[] = [];
+  const champions: Robot[] = [];
 
   for (const g of groupLabels) {
     const gMatches = state.matches
-      .filter((m: any) => m.phase === "elimination" && m.group === g)
-      .sort((a: any, b: any) => a.round - b.round);
+      .filter((m) => m.phase === "elimination" && m.group === g)
+      .sort((a, b) => a.round - b.round);
 
-    if (gMatches.length === 0) return; // ainda não começou a eliminação nesse grupo
+    if (gMatches.length === 0) return;
 
-    const rounds = [...new Set(gMatches.map((m: any) => m.round))].sort((a, b) => a - b);
+    const rounds = [...new Set(gMatches.map((m) => m.round))].sort((a, b) => a - b);
     const lastRound = rounds[rounds.length - 1];
-    const lastRoundMatches = gMatches.filter((m: any) => m.round === lastRound);
+    const lastRoundMatches = gMatches.filter((m) => m.round === lastRound);
 
-    // Se o último round ainda tem luta em andamento, ainda não acabou
-    const allFinished = lastRoundMatches.every((m: any) => m.finished);
+    const allFinished = lastRoundMatches.every((m) => m.finished);
     if (!allFinished) return;
 
-    // Campeão do grupo (único vencedor do último round)
-    const winners = lastRoundMatches.filter((m: any) => m.winner).map((m: any) => m.winner);
+    const winners = lastRoundMatches.filter((m) => m.winner).map((m) => m.winner).filter(Boolean) as Robot[];
     if (winners.length === 1) champions.push(winners[0]);
-    else return; // grupo ainda indefinido
+    else return;
   }
 
-  // Se já existe final global, não recria
   const already = state.matches.some(
     (m) => m.phase === "elimination" && !m.group
   );
@@ -374,12 +464,11 @@ function checkAndGenerateGrandFinal() {
 
   if (champions.length < 2) return;
 
-  // 🔸 Cria o bracket final entre campeões
-  const BYE = { id: "bye", name: "BYE", team: "", image: "" };
+  const BYE = { id: "bye", name: "BYE", team: "", image: "" } as Robot;
   const shuffled = [...champions].sort(() => Math.random() - 0.5);
   if (shuffled.length % 2 !== 0) shuffled.push(BYE);
 
-  const finals: any[] = [];
+  const finals: Match[] = [];
   for (let i = 0; i < shuffled.length; i += 2) {
     const A = shuffled[i];
     const B = shuffled[i + 1];
@@ -390,59 +479,53 @@ function checkAndGenerateGrandFinal() {
       id: uuidv4(),
       phase: "elimination",
       round: 1,
-      group: null, // ← sem grupo = Fase Final
+      group: null,
       robotA: A.id !== "bye" ? A : null,
       robotB: B.id !== "bye" ? B : null,
       scoreA: isBye && winner?.id === A.id ? 33 : 0,
       scoreB: isBye && winner?.id === B.id ? 33 : 0,
-      winner: isBye ? winner : null,
+      winner,
       finished: !!isBye,
       type: isBye ? "WO" : "normal",
-    });
+    } as Match);
   }
 
   state.matches.push(...finals);
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   console.log("🏆 Mata-mata final entre campeões gerado!");
 }
 
 
-// 🔹 Cria próximo round dentro de um grupo quando o anterior terminou
 function progressGroupEliminations() {
   const groupLabels = Object.keys(state.groupTables || {});
   for (const g of groupLabels) {
     const groupMatches = state.matches
-      .filter((m: any) => m.phase === "elimination" && m.group === g)
-      .sort((a: any, b: any) => a.round - b.round);
+      .filter((m) => m.phase === "elimination" && m.group === g)
+      .sort((a, b) => a.round - b.round);
 
     if (groupMatches.length === 0) continue;
 
-    // pega o último round
-    const rounds = [...new Set(groupMatches.map((m: any) => m.round))].sort(
+    const rounds = [...new Set(groupMatches.map((m) => m.round))].sort(
       (a, b) => a - b
     );
     const lastRound = rounds[rounds.length - 1];
-    const lastMatches = groupMatches.filter((m: any) => m.round === lastRound);
+    const lastMatches = groupMatches.filter((m) => m.round === lastRound);
 
-    // só continua se todas terminaram
-    const allFinished = lastMatches.every((m: any) => m.finished);
+    const allFinished = lastMatches.every((m) => m.finished);
     if (!allFinished) continue;
 
-    // vencedores
     const winners = lastMatches
-      .filter((m: any) => m.winner)
-      .map((m: any) => m.winner);
+      .filter((m) => m.winner)
+      .map((m) => m.winner) as Robot[];
 
-    // se já só sobrou 1 vencedor => campeão do grupo
     if (winners.length <= 1) continue;
 
-    // monta próxima rodada
     const nextRound = lastRound + 1;
-    const BYE = { id: "bye", name: "BYE", team: "", image: "" };
+    const BYE = { id: "bye", name: "BYE", team: "", image: "" } as Robot;
     const shuffled = [...winners].sort(() => Math.random() - 0.5);
     if (shuffled.length % 2 !== 0) shuffled.push(BYE);
 
-    const nextMatches: any[] = [];
+    const nextMatches: Match[] = [];
     for (let i = 0; i < shuffled.length; i += 2) {
       const A = shuffled[i];
       const B = shuffled[i + 1];
@@ -458,54 +541,49 @@ function progressGroupEliminations() {
         robotB: B.id !== "bye" ? B : null,
         scoreA: isBye && winner?.id === A.id ? 33 : 0,
         scoreB: isBye && winner?.id === B.id ? 33 : 0,
-        winner: isBye ? winner : null,
+        winner,
         finished: !!isBye,
         type: isBye ? "WO" : "normal",
-      });
+      } as Match);
     }
 
     state.matches.push(...nextMatches);
-    broadcast("UPDATE_STATE", { state });
+    broadcastAndSave("UPDATE_STATE", { state });
     console.log(`🏁 Nova rodada criada no grupo ${g} (Round ${nextRound})`);
   }
 }
 
-// 🔹 Atualiza campeões de grupo quando um grupo termina totalmente
 function updateGroupChampions() {
   const groupLabels = Object.keys(state.groupTables || {});
   for (const g of groupLabels) {
     const gMatches = state.matches
-      .filter((m: any) => m.phase === "elimination" && m.group === g)
-      .sort((a: any, b: any) => a.round - b.round);
+      .filter((m) => m.phase === "elimination" && m.group === g)
+      .sort((a, b) => a.round - b.round);
 
     if (gMatches.length === 0) continue;
 
-    const rounds = [...new Set(gMatches.map((m: any) => m.round))].sort((a, b) => a - b);
+    const rounds = [...new Set(gMatches.map((m) => m.round))].sort((a, b) => a - b);
     const lastRound = rounds[rounds.length - 1];
-    const lastRoundMatches = gMatches.filter((m: any) => m.round === lastRound);
+    const lastRoundMatches = gMatches.filter((m) => m.round === lastRound);
 
-    // Se o último round ainda não terminou, pula
-    const allFinished = lastRoundMatches.every((m: any) => m.finished);
+    const allFinished = lastRoundMatches.every((m) => m.finished);
     if (!allFinished) continue;
 
-    // Se já temos campeão, pula
-    const alreadyHas = state.groupTables[g].some((r: any) => r.isChampion);
+    const table = state.groupTables![g] as (GroupTableItem & { isChampion?: boolean })[];
+    const alreadyHas = table.some((r) => r.isChampion);
     if (alreadyHas) continue;
 
-    // Define o campeão
-    const winners = lastRoundMatches.filter((m: any) => m.winner).map((m: any) => m.winner);
+    const winners = lastRoundMatches.filter((m) => m.winner).map((m) => m.winner) as Robot[];
     if (winners.length === 1) {
       const champ = winners[0];
-      const table = state.groupTables[g];
       for (const r of table) r.isChampion = r.robotId === champ.id;
       console.log(`🏅 Campeão do grupo ${g}: ${champ.name}`);
     }
   }
 
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
-/* ------------------ ELIMINATÓRIAS ------------------ */
 function generateEliminationFromGroups() {
   const tables = computeGroupTables();
   state.groupTables = tables;
@@ -537,11 +615,11 @@ function generateEliminationFromGroups() {
       scoreA: 0,
       scoreB: 0,
       winner: null,
-      finished: false
+      finished: false,
+      type: "normal"
     });
   }
 
-  // rounds seguintes
   let curr = elimMatches.length;
   let round = 1;
   while (curr > 1) {
@@ -557,7 +635,8 @@ function generateEliminationFromGroups() {
         scoreA: 0,
         scoreB: 0,
         winner: null,
-        finished: false
+        finished: false,
+        type: "normal"
       });
     }
     curr = nextCount;
@@ -567,10 +646,9 @@ function generateEliminationFromGroups() {
   state.matches.push(...elimMatches);
   const first = state.matches.find(m => !m.finished);
   setCurrentMatch(first?.id || null);
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
-/* ------------------ FINALIZAÇÃO ------------------ */
 function finalizeMatch(id: string, scoreA: number, scoreB: number) {
   const m = state.matches.find(mm => mm.id === id);
   if (!m) return;
@@ -582,6 +660,7 @@ function finalizeMatch(id: string, scoreA: number, scoreB: number) {
     if (scoreA > scoreB) m.winner = m.robotA;
     else if (scoreB > scoreA) m.winner = m.robotB;
   }
+  m.type = "normal";
 
   state.winner = m.winner;
   state.lastWinner = m.winner;
@@ -592,16 +671,24 @@ function finalizeMatch(id: string, scoreA: number, scoreB: number) {
     if (allGroupsDone) generateEliminationFromGroups();
   } else {
     const round = m.round;
-    const currentRound = state.matches.filter(x => x.phase === "elimination" && x.round === round);
-    if (currentRound.every(x => x.finished)) {
-      const winners = currentRound.map(x => x.winner).filter(Boolean) as Robot[];
-      const nextRound = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1);
-      for (let i = 0; i < winners.length; i++) {
-        const target = nextRound[Math.floor(i / 2)];
-        if (!target) continue;
-        if (i % 2 === 0) target.robotA = winners[i];
-        else target.robotB = winners[i];
-      }
+    const currentMatchesInRound = state.matches.filter(x => x.phase === "elimination" && x.round === round && x.group === m.group);
+    
+    if (currentMatchesInRound.every(x => x.finished)) {
+        const winners = currentMatchesInRound.map(x => x.winner).filter(Boolean) as Robot[];
+        const nextRoundMatches = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1 && x.group === m.group);
+
+        for (let i = 0; i < winners.length; i++) {
+            const target = nextRoundMatches[Math.floor(i / 2)];
+            if (!target) continue;
+            if (i % 2 === 0) target.robotA = winners[i];
+            else target.robotB = winners[i];
+        }
+
+        if (m.group) {
+          progressGroupEliminations();
+          updateGroupChampions();
+          checkAndGenerateGrandFinal();
+        }
     }
   }
 
@@ -611,17 +698,16 @@ function finalizeMatch(id: string, scoreA: number, scoreB: number) {
     state.currentMatchId = null;
     state.mainStatus = "finished";
   }
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
-/* ------------------ GERAÇÃO PRINCIPAL ------------------ */
 function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
   const robots = [...state.robots];
   if (robots.length < 2) {
     state.matches = [];
     state.groupTables = {};
     state.currentMatchId = null;
-    broadcast("UPDATE_STATE", { state });
+    broadcastAndSave("UPDATE_STATE", { state });
     return;
   }
 
@@ -636,10 +722,9 @@ function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup 
   (state as any).groupCount = groups.length;
   state.groupTables = computeGroupTables();
   state.currentMatchId = groupMatches[0]?.id ?? null;
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
-/* ------------------ INÍCIO DE LUTA ------------------ */
 function startMatch(id: string) {
   const match = state.matches.find((m) => m.id === id);
   if (!match) return;
@@ -649,8 +734,16 @@ function startMatch(id: string) {
   state.mainStatus = "idle";
   state.winner = null;
 
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   console.log(`🎮 Combate iniciado: ${match.robotA?.name} vs ${match.robotB?.name}`);
+}
+
+function updateRobotScore(robotId: string, scoreAtual: number) {
+  const robot = state.robots.find((r) => r.id === robotId);
+  if (robot) {
+    robot.score = (robot.score || 0) + scoreAtual;
+    console.log(`✅ Pontuação do robô ${robot.name}: ${robot.score}`);
+  }
 }
 
 /* ------------------ ENDPOINTS ------------------ */
@@ -667,10 +760,8 @@ app.post("/auth/login", (req, res) => {
 // 🔓 Rotas públicas
 app.get("/state", (_req, res) => res.json({ state }));
 app.get("/ranking", (_req, res) => {
-  // Mapeia robôs atualizados
   const robotMap = Object.fromEntries(state.robots.map(r => [r.id, r]));
 
-  // Todos os matches (grupos + mata-mata)
   const matches = state.matches.filter(
     (m) => m.phase === "groups" || m.phase === "elimination"
   );
@@ -681,7 +772,6 @@ app.get("/ranking", (_req, res) => {
     if (!m.finished || !m.robotA || !m.robotB) continue;
     const { robotA, robotB } = m;
 
-    // Busca sempre as infos mais recentes
     const currentA = robotMap[robotA.id] || robotA;
     const currentB = robotMap[robotB.id] || robotB;
 
@@ -706,7 +796,6 @@ app.get("/ranking", (_req, res) => {
         wo: 0,
       };
 
-    // Estatísticas básicas
     if (m.scoreA > m.scoreB) {
       table[currentA.id].wins++;
       table[currentB.id].losses++;
@@ -718,14 +807,12 @@ app.get("/ranking", (_req, res) => {
       table[currentB.id].draws++;
     }
 
-    // KO / WO
     if (m.type === "KO" && m.winner)
-      table[m.winner.id].ko = (table[m.winner.id].ko || 0) + 1;
+      table[m.winner.id].ko = (table[m.winner.id]?.ko || 0) + 1;
     if (m.type === "WO" && m.winner)
-      table[m.winner.id].wo = (table[m.winner.id].wo || 0) + 1;
+      table[m.winner.id].wo = (table[m.winner.id]?.wo || 0) + 1;
   }
 
-  // Garante que todos os robôs apareçam, mesmo sem luta
   for (const r of state.robots) {
     if (!table[r.id]) {
       table[r.id] = {
@@ -738,14 +825,12 @@ app.get("/ranking", (_req, res) => {
         wo: 0,
       };
     } else {
-      // Atualiza dados de nome/foto/equipe se o robô já existia
       table[r.id].name = r.name;
       table[r.id].team = r.team;
       table[r.id].image = r.image;
     }
   }
 
-  // Ordena por pontuação e vitórias
   const ranking = Object.values(table).sort(
     (a: any, b: any) =>
       b.pts - a.pts ||
@@ -760,11 +845,25 @@ app.get("/ranking", (_req, res) => {
 // 🔒 Rotas protegidas (somente admin autenticado)
 app.use(authenticateToken);
 
+// 🆕 Rotas de Gerenciamento do Banco de Dados
+app.post("/db/save", async (_req, res) => {
+  await saveState();
+  broadcast("UPDATE_STATE", { state });
+  res.json({ ok: true, message: "Estado atual salvo no banco de dados." });
+});
+
+app.post("/db/load", async (_req, res) => {
+  await loadStateFromDBAndBroadcast();
+  res.json({ ok: true, message: "Estado recarregado do banco de dados." });
+});
+
+
+// Rotas CRUD de Robôs e Partidas
 app.post("/robots", (req, res) => {
   const { name, team, image, score } = req.body;
   const robot: Robot = { id: uuidv4(), name, team, image, score: score || 0 };
   state.robots.push(robot);
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   res.json(robot);
 });
 
@@ -781,7 +880,7 @@ app.post("/matches/generate", (req, res) => {
 app.post("/matches/elimination", (req, res) => {
   const { matches } = req.body;
   state.matches.push(...matches);
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 
@@ -796,22 +895,17 @@ app.post("/matches/:id/result", (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/arena/reset", (_req, res) => {
+app.post("/arena/reset", async (_req, res) => {
   stopAllTimers();
-  state = {
-    robots: [],
-    matches: [],
-    currentMatchId: null,
-    mainTimer: 0,
-    mainStatus: "idle",
-    recoveryTimer: 0,
-    recoveryActive: false,
-    winner: null,
-    lastWinner: null,
-    ranking: [],
-    groupTables: {}
-  };
-  broadcast("UPDATE_STATE", { state });
+  state = { ...defaultState };
+  
+  if (dbClient) {
+    // É mais seguro fazer um DELETE + INSERT para resetar
+    await dbClient.query("DELETE FROM arena_state WHERE id = 1"); 
+    await dbClient.query("INSERT INTO arena_state (id, data) VALUES (1, $1)", [JSON.stringify(state)]);
+  }
+
+  broadcastAndSave("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 
@@ -819,12 +913,10 @@ app.post("/matches/:id/judges", (req, res) => {
   const match = state.matches.find((m) => m.id === req.params.id);
   if (!match) return res.status(404).json({ error: "Match not found" });
 
-  const { judges, decision, winnerId } = req.body; // Recebe as pontuações dos jurados e a decisão de K.O ou W.O
+  const { judges, decision, winnerId } = req.body;
   let totalA = 0, totalB = 0;
 
-  // Se for K.O ou W.O, aplica 33 pontos ao vencedor
   if (decision === "KO" || decision === "WO") {
-    // Verifica qual robô foi selecionado para ganhar
     match.scoreA = winnerId === match.robotA?.id ? 33 : 0;
     match.scoreB = winnerId === match.robotB?.id ? 33 : 0;
 
@@ -832,17 +924,15 @@ app.post("/matches/:id/judges", (req, res) => {
     match.finished = true;
     match.type = decision === "KO" ? "KO" : "WO";
   } else {
-    // Caso contrário, calcula a pontuação para cada robô
     judges.forEach((j: any) => {
       totalA += j.damageA + j.hitsA;
       totalB += j.damageB + j.hitsB;
     });
 
-    // Atualiza a pontuação final no combate
     match.scoreA = totalA;
     match.scoreB = totalB;
     if (totalA === totalB) {
-      match.winner = null; // Nenhum vencedor
+      match.winner = null;
     } else {
       match.winner = totalA > totalB ? match.robotA : match.robotB;
     }
@@ -850,13 +940,11 @@ app.post("/matches/:id/judges", (req, res) => {
     match.type = "normal";
   }
 
-  // Atualiza os robôs com a pontuação final
   if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA);
   if (match.robotB) updateRobotScore(match.robotB.id, match.scoreB);
 
   state.winner = match.winner;
 
-  // Após atualizar todas as partidas:
   const allGroupsFinished = state.matches
     .filter((m) => m.phase === "groups")
     .every((m) => m.finished);
@@ -865,39 +953,21 @@ app.post("/matches/:id/judges", (req, res) => {
     generateGroupEliminations();
   }
 
-  // Atualiza o estado global
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
 
-  // Avança os rounds internos de cada grupo automaticamente
   progressGroupEliminations();
-
-  // Atualiza campeões de grupo quando todos os rounds internos terminam
   updateGroupChampions();
-
-
-  // Quando todos os grupos tiverem campeões, gera a fase final
   checkAndGenerateGrandFinal();
 
-
-  // Responde com o resultado do combate
   res.json({ ok: true, result: match });
 });
 
-
-// Função auxiliar para atualizar o robô com a pontuação
-function updateRobotScore(robotId: string, scoreAtual: number) {
-  const robot = state.robots.find((r) => r.id === robotId);
-  if (robot) {
-    robot.score = (robot.score || 0) + scoreAtual; // Acumula a pontuação do robô
-    console.log(`✅ Pontuação do robô ${robot.name}: ${robot.score}`);
-  }
-}
 
 app.delete("/robots/:id", (req, res) => {
   state.robots = state.robots.filter(r => r.id !== req.params.id);
   state.matches = state.matches.filter(m => m.robotA?.id !== req.params.id && m.robotB?.id !== req.params.id);
   if (state.currentMatchId && !state.matches.find(m => m.id === state.currentMatchId)) setCurrentMatch(null);
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 
@@ -910,7 +980,7 @@ app.put("/robots/:id", (req, res) => {
   if (team) robot.team = team;
   if (image !== undefined) robot.image = image;
 
-  broadcast("UPDATE_STATE", { state });
+  broadcastAndSave("UPDATE_STATE", { state });
   res.json({ ok: true, robot });
 });
 
@@ -923,28 +993,26 @@ wss.on("connection", (ws) => {
       const { type, payload } = JSON.parse(String(raw));
       switch (type) {
         case "START_MAIN":
-          // Sempre zera o timer de recuperação ao iniciar o principal
           if (recoveryTick) clearInterval(recoveryTick);
           state.recoveryTimer = 10;
-          state.recoveryActive = false;   // some da tela
+          state.recoveryActive = false;
           state.recoveryPaused = false;
 
           startMainTimer(180);
-          broadcast("UPDATE_STATE", { state });
+          broadcastAndSave("UPDATE_STATE", { state });
           break;
 
 
         case "PAUSE_MAIN":
           if (mainTick) clearInterval(mainTick);
           state.mainStatus = "paused";
-          broadcast("UPDATE_STATE", { state });
+          broadcastAndSave("UPDATE_STATE", { state });
           break;
 
         case "RESUME_MAIN":
-          // Sempre zera o timer de recuperação ao iniciar o principal
           if (recoveryTick) clearInterval(recoveryTick);
           state.recoveryTimer = 10;
-          state.recoveryActive = false;   // some da tela
+          state.recoveryActive = false;
           state.recoveryPaused = false;
 
           if (state.mainTimer > 0) {
@@ -956,7 +1024,7 @@ wss.on("connection", (ws) => {
           if (mainTick) clearInterval(mainTick);
           state.mainTimer = 180;
           state.mainStatus = "idle";
-          broadcast("UPDATE_STATE", { state });
+          broadcastAndSave("UPDATE_STATE", { state });
           break;
 
         case "START_RECOVERY":
@@ -964,14 +1032,13 @@ wss.on("connection", (ws) => {
           break;
 
         case "PAUSE_RECOVERY":
-          state.recoveryPaused = true;  // pausa contagem, mantém visível
-          broadcast("UPDATE_STATE", { state });
+          state.recoveryPaused = true;
+          broadcastAndSave("UPDATE_STATE", { state });
           break;
 
         case "RESUME_RECOVERY":
           if (state.recoveryTimer > 0) {
             state.recoveryPaused = false;
-            // Reinicia o loop se o contador estiver pausado
             startRecoveryTimer(state.recoveryTimer, true);
           }
           break;
@@ -980,9 +1047,9 @@ wss.on("connection", (ws) => {
         case "RESET_RECOVERY":
           if (recoveryTick) clearInterval(recoveryTick);
           state.recoveryTimer = 10;
-          state.recoveryActive = false;   // some da tela
+          state.recoveryActive = false;
           state.recoveryPaused = false;
-          broadcast("UPDATE_STATE", { state });
+          broadcastAndSave("UPDATE_STATE", { state });
           break;
 
 
@@ -994,8 +1061,4 @@ wss.on("connection", (ws) => {
   });
 });
 
-server.listen(PORT, () =>
-  console.log(`✅ Arena backend v6.1 (chaveamento dinâmico configurável) @${PORT}`)
-);
-
-console.log(state);
+console.log("Servidor iniciando...");
