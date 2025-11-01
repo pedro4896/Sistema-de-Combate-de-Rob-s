@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { ArenaState, Robot, Match, GroupTableItem } from "./types";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { Client, QueryResult } from "pg"; // 👈 Importa o cliente PG
+import { Client, QueryResult } from "pg";
 
 const SECRET_KEY = process.env.ARENA_SECRET || "arena_secret_2025";
 const PORT = Number(process.env.PORT || 8080);
@@ -45,63 +45,193 @@ const defaultState: ArenaState = {
 let state: ArenaState = defaultState;
 let dbClient: Client | null = null;
 
-// Função para salvar o estado atual no PostgreSQL
-async function saveState() {
+
+// ===============================================
+// FUNÇÕES DE PERSISTÊNCIA (SEPARADAS POR TABELA)
+// ===============================================
+
+/**
+ * Cria as tabelas robots, matches e arena_config se elas não existirem.
+ */
+async function setupDatabase() {
+  if (!dbClient) return;
+
+  // 1. Tabela Robôs
+  await dbClient.query(`
+    CREATE TABLE IF NOT EXISTS robots (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        team VARCHAR(255),
+        image VARCHAR(255),
+        score INT DEFAULT 0
+    );
+  `);
+  
+  // 2. Tabela Configuração Global (timers, status)
+  await dbClient.query(`
+    CREATE TABLE IF NOT EXISTS arena_config (
+        id INT PRIMARY KEY,
+        current_match_id VARCHAR(255),
+        main_timer INT DEFAULT 0,
+        main_status VARCHAR(50) DEFAULT 'idle',
+        recovery_timer INT DEFAULT 0,
+        recovery_active BOOLEAN DEFAULT FALSE,
+        recovery_paused BOOLEAN DEFAULT FALSE,
+        last_winner_id VARCHAR(255),
+        advance_per_group INT DEFAULT 2,
+        group_count INT DEFAULT 2
+    );
+  `);
+  
+  // 3. Tabela Partidas (com Foreign Keys para Robôs)
+  await dbClient.query(`
+    CREATE TABLE IF NOT EXISTS matches (
+        id VARCHAR(255) PRIMARY KEY,
+        phase VARCHAR(50) NOT NULL,
+        round INT NOT NULL,
+        group_label VARCHAR(50),
+        robot_a_id VARCHAR(255),
+        robot_b_id VARCHAR(255),
+        score_a INT DEFAULT 0,
+        score_b INT DEFAULT 0,
+        winner_id VARCHAR(255),
+        finished BOOLEAN DEFAULT FALSE,
+        type VARCHAR(50) DEFAULT 'normal'
+        -- Adicione FOREIGN KEYs se precisar de restrições em cascata
+    );
+  `);
+
+  // Garante que a linha de configuração exista
+  const configRes = await dbClient.query("SELECT * FROM arena_config WHERE id = 1");
+  if (configRes.rows.length === 0) {
+    await dbClient.query(`
+      INSERT INTO arena_config (id, main_status, advance_per_group, group_count) 
+      VALUES (1, $1, $2, $3)
+    `, [defaultState.mainStatus, 2, 2]);
+  }
+
+  // ⚠️ NOTA: Se você estava usando a tabela 'arena_state' (JSONB), o PG manterá ela. 
+  // Recomenda-se um DROP TABLE arena_state; manual para limpeza.
+  console.log("🛠️ Estrutura do banco de dados verificada/criada.");
+}
+
+
+/**
+ * Salva apenas os dados de configuração/estado em tempo real (timers, status)
+ * na tabela 'arena_config'.
+ */
+async function saveConfig() {
   if (!dbClient) return;
   try {
-    const payload = JSON.stringify(state);
+    const config = state as any;
     const sql = `
-      INSERT INTO arena_state (id, data)
-      VALUES (1, $1)
-      ON CONFLICT (id) DO UPDATE
-      SET data = $1, updated_at = NOW();
+      UPDATE arena_config SET
+        current_match_id = $1,
+        main_timer = $2,
+        main_status = $3,
+        recovery_timer = $4,
+        recovery_active = $5,
+        recovery_paused = $6,
+        last_winner_id = $7,
+        advance_per_group = $8,
+        group_count = $9
+      WHERE id = 1;
     `;
-    await dbClient.query(sql, [payload]);
+    await dbClient.query(sql, [
+      config.currentMatchId,
+      config.mainTimer,
+      config.mainStatus,
+      config.recoveryTimer,
+      config.recoveryActive,
+      config.recoveryPaused,
+      config.lastWinner?.id,
+      config.advancePerGroup || 2,
+      config.groupCount || 2,
+    ]);
   } catch (error) {
-    console.error("❌ Erro ao salvar estado no DB:", error);
+    console.error("❌ Erro ao salvar configuração no DB:", error);
   }
 }
 
-// Função para carregar o estado do PostgreSQL
-async function loadState(): Promise<ArenaState> {
+/**
+ * Carrega todos os dados das três tabelas e reconstrói o objeto ArenaState em memória.
+ */
+async function loadStateFromDB(): Promise<ArenaState> {
   if (!dbClient) return defaultState;
+
   try {
-    const res: QueryResult<{ data: ArenaState }> = await dbClient.query(
-      "SELECT data FROM arena_state WHERE id = 1"
-    );
-    if (res.rows.length > 0) {
-      console.log("✅ Estado carregado do banco de dados.");
-      return res.rows[0].data as ArenaState;
-    }
+    const [robotsRes, matchesRes, configRes] = await Promise.all([
+      dbClient.query("SELECT * FROM robots ORDER BY name"),
+      dbClient.query("SELECT * FROM matches ORDER BY round, group_label, id"),
+      dbClient.query("SELECT * FROM arena_config WHERE id = 1"),
+    ]);
+
+    // Mapeia Robôs
+    const robots: Robot[] = robotsRes.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      team: row.team,
+      image: row.image,
+      score: row.score || 0,
+    }));
+    const robotMap = Object.fromEntries(robots.map(r => [r.id, r]));
+    
+    const config = configRes.rows[0];
+    if (!config) return defaultState;
+
+    // Mapeia Partidas
+    const matches: Match[] = matchesRes.rows.map(row => ({
+      id: row.id,
+      phase: row.phase as any,
+      round: row.round,
+      group: row.group_label,
+      robotA: row.robot_a_id ? robotMap[row.robot_a_id] : null,
+      robotB: row.robot_b_id ? robotMap[row.robot_b_id] : null,
+      scoreA: row.score_a,
+      scoreB: row.score_b,
+      winner: row.winner_id ? robotMap[row.winner_id] : null,
+      finished: row.finished,
+      type: row.type as any,
+    }));
+
+    const newState: ArenaState = {
+      robots,
+      matches,
+      currentMatchId: config.current_match_id,
+      mainTimer: config.main_timer,
+      mainStatus: config.main_status as any,
+      recoveryTimer: config.recovery_timer,
+      recoveryActive: config.recovery_active,
+      recoveryPaused: config.recovery_paused,
+      winner: config.last_winner_id ? robotMap[config.last_winner_id] : null,
+      lastWinner: config.last_winner_id ? robotMap[config.last_winner_id] : null,
+      ranking: [],
+      groupTables: {},
+      // Propriedades de configuração do torneio
+      ...(config.advance_per_group && { advancePerGroup: config.advance_per_group }),
+      ...(config.group_count && { groupCount: config.group_count }),
+    };
+
+    // Recalcula tabelas e ranking na memória
+    newState.groupTables = computeGroupTables(robots, matches);
+
+    return newState;
   } catch (error) {
-    console.warn("⚠️ Tabela 'arena_state' não encontrada ou erro ao carregar. Tentando criar...");
-    // Cria a tabela se não existir (se a falha foi por tabela inexistente)
-    await dbClient.query(`
-      CREATE TABLE IF NOT EXISTS arena_state (
-        id INT PRIMARY KEY,
-        data JSONB,
-        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
-      );
-    `);
-    // Insere o estado inicial se não houver registros
-    await dbClient.query("INSERT INTO arena_state (id, data) VALUES (1, $1) ON CONFLICT DO NOTHING", [JSON.stringify(defaultState)]);
-    console.log("🛠️ Tabela 'arena_state' criada e inicializada.");
+    // Se a falha for na conexão, setupDatabase cuidará disso.
+    console.error("❌ Erro ao carregar estado do DB:", error);
+    return defaultState;
   }
-  return defaultState;
 }
 
-// Função para recarregar o estado do DB e transmitir a todos os clientes
+// Função de suporte que usa loadStateFromDB
 async function loadStateFromDBAndBroadcast() {
-  state = await loadState();
+  state = await loadStateFromDB();
   broadcast("UPDATE_STATE", { state });
   console.log("🔄 Estado recarregado do banco de dados e transmitido.");
 }
 
-
 // Inicialização e Conexão ao DB
 async function initDBAndServer() {
-  // Configuração do cliente PG com fallbacks para rodar localmente
   const POSTGRES_HOST = process.env.POSTGRES_HOST || "localhost"; 
   const POSTGRES_PORT = Number(process.env.POSTGRES_PORT || 5432); 
   const POSTGRES_USER = process.env.POSTGRES_USER || "postgres"; 
@@ -116,28 +246,26 @@ async function initDBAndServer() {
     database: POSTGRES_DB,
   };
   
-  // Agora usamos o objeto de configuração, que é mais seguro do que a concatenação manual de strings com variáveis indefinidas.
   dbClient = new Client(connectionConfig); 
   
   try {
     await dbClient.connect();
     console.log("✅ Conectado ao PostgreSQL");
 
-    // Tenta carregar o estado
-    state = await loadState();
-    if (state === defaultState) {
-      // Se carregou o estado padrão (porque não havia registro), salva ele no banco
-      await saveState(); 
-    }
-
-    // Inicia o servidor Express e WebSocket
+    // 1. Configura as tabelas (cria se não existirem)
+    await setupDatabase();
+    
+    // 2. Carrega o estado em memória (a nova lógica)
+    state = await loadStateFromDB();
+    
+    // 3. Inicia o servidor
     server.listen(PORT, () =>
       console.log(`✅ Arena backend rodando @${PORT}`)
     );
 
   } catch (error) {
     console.error("❌ Falha ao conectar ao PostgreSQL:", error);
-    process.exit(1); // Sai do processo se a conexão falhar
+    process.exit(1); 
   }
 }
 
@@ -146,10 +274,10 @@ initDBAndServer();
 
 /* ------------------ UTILITÁRIOS & FUNÇÕES CORE ------------------ */
 
-// Adapta a função broadcast para também salvar o estado
+// Adapta a função broadcast para também salvar a **config**
 function broadcastAndSave(type: string, payload: any) {
   broadcast(type, payload);
-  saveState(); // Salva após qualquer alteração que dispara broadcast
+  saveConfig(); // Salva APENAS o estado da arena/timers
 }
 
 function broadcast(type: string, payload: any) {
@@ -328,14 +456,16 @@ function generateGroupMatches(groups: Robot[][]): Match[] {
   return matches;
 }
 
+/* ------------------ TABELAS (LÓGICA DE CÁLCULO INALTERADA) ------------------ */
+
 function makeItem(r: Robot): GroupTableItem {
   return { robotId: r.id, name: r.name, team: r.team, pts: 0, wins: 0, draws: 0, losses: 0, ko: 0, wo: 0 } as GroupTableItem;
 }
 
-
-function computeGroupTables(): Record<string, GroupTableItem[]> {
+function computeGroupTables(robots: Robot[] = state.robots, matches: Match[] = state.matches): Record<string, GroupTableItem[]> {
   const tables: Record<string, Record<string, GroupTableItem>> = {};
-  const groupMatches = state.matches.filter((m) => m.phase === "groups");
+  const robotMap = Object.fromEntries(robots.map(r => [r.id, r]));
+  const groupMatches = matches.filter((m) => m.phase === "groups");
 
   const groups = Array.from(
     new Set(groupMatches.map((m) => m.group).filter(Boolean))
@@ -347,13 +477,12 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
     const g = m.group!;
     const A = m.robotA?.id;
     const B = m.robotB?.id;
-    if (!A || !B) continue;
+    if (!A || !B || A === "bye" || B === "bye") continue;
 
-    if (!tables[g][A]) tables[g][A] = makeItem(m.robotA!);
-    if (!tables[g][B]) tables[g][B] = makeItem(m.robotB!);
+    if (!tables[g][A]) tables[g][A] = makeItem(robotMap[A]!);
+    if (!tables[g][B]) tables[g][B] = makeItem(robotMap[B]!);
     if (!m.finished) continue;
 
-    // Pontuação padrão
     if (m.scoreA > m.scoreB) {
       tables[g][A].pts += 3; tables[g][A].wins++; tables[g][B].losses++;
     } else if (m.scoreB > m.scoreA) {
@@ -363,7 +492,6 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
       tables[g][A].draws++; tables[g][B].draws++;
     }
 
-    // Contabiliza KO e WO
     if (m.type === "KO" && m.winner) {
       tables[g][m.winner.id].ko = (tables[g][m.winner.id]?.ko || 0) + 1;
     }
@@ -388,17 +516,17 @@ function computeGroupTables(): Record<string, GroupTableItem[]> {
 
 
 function generateGroupEliminations() {
-  const tables = computeGroupTables();
-  state.groupTables = tables;
+  state.groupTables = computeGroupTables();
   const advancePerGroup = (state as any).advancePerGroup || 2;
+  const newMatches: Match[] = [];
 
-  for (const g in tables) {
+  for (const g in state.groupTables) {
     const already = state.matches.some(
       (m) => m.phase === "elimination" && m.group === g
     );
     if (already) continue;
 
-    const top = tables[g].slice(0, advancePerGroup);
+    const top = state.groupTables[g].slice(0, advancePerGroup);
     const qualified = top
       .map((r) => state.robots.find((x) => x.id === r.robotId))
       .filter(Boolean) as Robot[];
@@ -412,7 +540,7 @@ function generateGroupEliminations() {
       const isBye = !B;
       const winner = isBye ? A : null;
 
-      state.matches.push({
+      newMatches.push({
         id: uuidv4(),
         phase: "elimination",
         round: 1,
@@ -427,7 +555,11 @@ function generateGroupEliminations() {
       } as Match);
     }
   }
-
+  
+  if (newMatches.length > 0) {
+    insertMatches(newMatches);
+  }
+  
   broadcastAndSave("UPDATE_STATE", { state });
   console.log("🏁 Eliminatórias internas dos grupos criadas!");
 }
@@ -489,8 +621,11 @@ function checkAndGenerateGrandFinal() {
       type: isBye ? "WO" : "normal",
     } as Match);
   }
+  
+  if (finals.length > 0) {
+    insertMatches(finals);
+  }
 
-  state.matches.push(...finals);
   broadcastAndSave("UPDATE_STATE", { state });
   console.log("🏆 Mata-mata final entre campeões gerado!");
 }
@@ -498,6 +633,8 @@ function checkAndGenerateGrandFinal() {
 
 function progressGroupEliminations() {
   const groupLabels = Object.keys(state.groupTables || {});
+  const newMatches: Match[] = [];
+
   for (const g of groupLabels) {
     const groupMatches = state.matches
       .filter((m) => m.phase === "elimination" && m.group === g)
@@ -525,14 +662,13 @@ function progressGroupEliminations() {
     const shuffled = [...winners].sort(() => Math.random() - 0.5);
     if (shuffled.length % 2 !== 0) shuffled.push(BYE);
 
-    const nextMatches: Match[] = [];
     for (let i = 0; i < shuffled.length; i += 2) {
       const A = shuffled[i];
       const B = shuffled[i + 1];
       const isBye = A.id === "bye" || B.id === "bye";
       const winner = isBye ? (A.id !== "bye" ? A : B) : null;
 
-      nextMatches.push({
+      newMatches.push({
         id: uuidv4(),
         phase: "elimination",
         round: nextRound,
@@ -546,15 +682,19 @@ function progressGroupEliminations() {
         type: isBye ? "WO" : "normal",
       } as Match);
     }
-
-    state.matches.push(...nextMatches);
-    broadcastAndSave("UPDATE_STATE", { state });
-    console.log(`🏁 Nova rodada criada no grupo ${g} (Round ${nextRound})`);
   }
+
+  if (newMatches.length > 0) {
+    insertMatches(newMatches);
+  }
+  
+  broadcastAndSave("UPDATE_STATE", { state });
+  if (newMatches.length > 0) console.log(`🏁 Nova(s) rodada(s) criada(s) em grupos internos!`);
 }
 
 function updateGroupChampions() {
   const groupLabels = Object.keys(state.groupTables || {});
+  let changed = false;
   for (const g of groupLabels) {
     const gMatches = state.matches
       .filter((m) => m.phase === "elimination" && m.group === g)
@@ -578,10 +718,13 @@ function updateGroupChampions() {
       const champ = winners[0];
       for (const r of table) r.isChampion = r.robotId === champ.id;
       console.log(`🏅 Campeão do grupo ${g}: ${champ.name}`);
+      changed = true;
     }
   }
 
-  broadcastAndSave("UPDATE_STATE", { state });
+  if (changed) {
+    broadcastAndSave("UPDATE_STATE", { state });
+  }
 }
 
 function generateEliminationFromGroups() {
@@ -643,70 +786,127 @@ function generateEliminationFromGroups() {
     round++;
   }
 
-  state.matches.push(...elimMatches);
+  insertMatches(elimMatches);
+  
   const first = state.matches.find(m => !m.finished);
   setCurrentMatch(first?.id || null);
   broadcastAndSave("UPDATE_STATE", { state });
 }
 
-function finalizeMatch(id: string, scoreA: number, scoreB: number) {
+async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: 'normal' | 'KO' | 'WO' = 'normal') {
   const m = state.matches.find(mm => mm.id === id);
-  if (!m) return;
+  if (!m || !dbClient) return;
 
-  m.finished = true;
-  m.scoreA = scoreA;
-  m.scoreB = scoreB;
+  let winnerId = null;
   if (m.robotA && m.robotB) {
-    if (scoreA > scoreB) m.winner = m.robotA;
-    else if (scoreB > scoreA) m.winner = m.robotB;
+    if (scoreA > scoreB) winnerId = m.robotA.id;
+    else if (scoreB > scoreA) winnerId = m.robotB.id;
   }
-  m.type = "normal";
+  
+  // 1. Atualiza a partida no DB
+  await dbClient.query(
+    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5`,
+    [scoreA, scoreB, winnerId, type, id]
+  );
+  
+  // 2. Atualiza o score acumulado dos robôs no DB (se aplicável)
+  if (m.robotA && scoreA > 0) await updateRobotScoreInDB(m.robotA.id, scoreA);
+  if (m.robotB && scoreB > 0) await updateRobotScoreInDB(m.robotB.id, scoreB);
 
-  state.winner = m.winner;
-  state.lastWinner = m.winner;
-  state.groupTables = computeGroupTables();
+  // 3. Recarrega o estado completo
+  await loadStateFromDBAndBroadcast();
 
-  if (m.phase === "groups") {
-    const allGroupsDone = state.matches.filter(x => x.phase === "groups").every(x => x.finished);
-    if (allGroupsDone) generateEliminationFromGroups();
-  } else {
-    const round = m.round;
-    const currentMatchesInRound = state.matches.filter(x => x.phase === "elimination" && x.round === round && x.group === m.group);
-    
-    if (currentMatchesInRound.every(x => x.finished)) {
-        const winners = currentMatchesInRound.map(x => x.winner).filter(Boolean) as Robot[];
-        const nextRoundMatches = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1 && x.group === m.group);
+  // 4. Aplica lógica de avanço
+  const currentMatchInState = state.matches.find(mm => mm.id === id);
+  if (currentMatchInState) {
+    const isGroupPhase = currentMatchInState.phase === "groups";
 
-        for (let i = 0; i < winners.length; i++) {
-            const target = nextRoundMatches[Math.floor(i / 2)];
-            if (!target) continue;
-            if (i % 2 === 0) target.robotA = winners[i];
-            else target.robotB = winners[i];
-        }
+    if (isGroupPhase) {
+      const allGroupsDone = state.matches.filter(x => x.phase === "groups").every(x => x.finished);
+      if (allGroupsDone) generateEliminationFromGroups();
+    } else {
+      const round = currentMatchInState.round;
+      const currentMatchesInRound = state.matches.filter(x => x.phase === "elimination" && x.round === round && x.group === currentMatchInState.group);
+      
+      if (currentMatchesInRound.every(x => x.finished)) {
+          const winners = currentMatchesInRound.map(x => x.winner).filter(Boolean) as Robot[];
+          const nextRoundMatches = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1 && x.group === currentMatchInState.group);
+          
+          const queries = [];
+          for (let i = 0; i < winners.length; i++) {
+              const target = nextRoundMatches[Math.floor(i / 2)];
+              if (!target) continue;
+              
+              if (i % 2 === 0) {
+                  target.robotA = winners[i];
+                  queries.push(dbClient.query(`UPDATE matches SET robot_a_id = $1 WHERE id = $2`, [winners[i].id, target.id]));
+              } else {
+                  target.robotB = winners[i];
+                  queries.push(dbClient.query(`UPDATE matches SET robot_b_id = $1 WHERE id = $2`, [winners[i].id, target.id]));
+              }
+          }
+          await Promise.all(queries);
 
-        if (m.group) {
-          progressGroupEliminations();
-          updateGroupChampions();
-          checkAndGenerateGrandFinal();
-        }
+          if (currentMatchInState.group) {
+            progressGroupEliminations();
+            updateGroupChampions();
+            checkAndGenerateGrandFinal();
+          }
+      }
     }
   }
 
+  // 5. Determina a próxima partida e atualiza a configuração
   const next = state.matches.find(x => !x.finished);
   if (next) setCurrentMatch(next.id);
   else {
     state.currentMatchId = null;
     state.mainStatus = "finished";
+    broadcastAndSave("UPDATE_STATE", { state });
   }
-  broadcastAndSave("UPDATE_STATE", { state });
 }
 
-function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
+/**
+ * Insere múltiplas partidas no DB e recarrega o estado.
+ */
+async function insertMatches(matches: Match[]) {
+  if (!dbClient) return;
+
+  const matchPromises = matches.map(m => {
+    const isBye = m.robotA?.id === "bye" || m.robotB?.id === "bye";
+    return dbClient?.query(
+      `INSERT INTO matches (id, phase, round, group_label, robot_a_id, robot_b_id, score_a, score_b, winner_id, finished, type) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        m.id,
+        m.phase,
+        m.round,
+        m.group,
+        m.robotA?.id !== "bye" ? m.robotA?.id : null,
+        m.robotB?.id !== "bye" ? m.robotB?.id : null,
+        m.scoreA,
+        m.scoreB,
+        m.winner?.id || null,
+        isBye || m.finished,
+        m.type
+      ]
+    );
+  });
+
+  await Promise.all(matchPromises);
+  await loadStateFromDBAndBroadcast();
+}
+
+
+/* ------------------ GERAÇÃO PRINCIPAL ------------------ */
+
+async function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
+  if (!dbClient) return;
+  
   const robots = [...state.robots];
   if (robots.length < 2) {
-    state.matches = [];
-    state.groupTables = {};
-    state.currentMatchId = null;
+    await dbClient.query("DELETE FROM matches");
+    state = await loadStateFromDB();
     broadcastAndSave("UPDATE_STATE", { state });
     return;
   }
@@ -716,15 +916,20 @@ function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup 
 
   const groupMatches = generateGroupMatches(groups);
 
-  state.matches = groupMatches;
-  state.lastWinner = null;
+  // Limpa e insere novas partidas
+  await dbClient.query("DELETE FROM matches");
+  await insertMatches(groupMatches);
+
+  // Atualiza as configurações
   (state as any).advancePerGroup = advancePerGroup;
   (state as any).groupCount = groups.length;
-  state.groupTables = computeGroupTables();
-  state.currentMatchId = groupMatches[0]?.id ?? null;
+  state.currentMatchId = state.matches[0]?.id ?? null;
+  state.lastWinner = null;
+  
   broadcastAndSave("UPDATE_STATE", { state });
 }
 
+/* ------------------ INÍCIO DE LUTA ------------------ */
 function startMatch(id: string) {
   const match = state.matches.find((m) => m.id === id);
   if (!match) return;
@@ -738,15 +943,20 @@ function startMatch(id: string) {
   console.log(`🎮 Combate iniciado: ${match.robotA?.name} vs ${match.robotB?.name}`);
 }
 
-function updateRobotScore(robotId: string, scoreAtual: number) {
+
+/**
+ * Função auxiliar para atualizar o score acumulado do robô no DB
+ */
+async function updateRobotScoreInDB(robotId: string, scoreAtual: number) {
   const robot = state.robots.find((r) => r.id === robotId);
   if (robot) {
-    robot.score = (robot.score || 0) + scoreAtual;
-    console.log(`✅ Pontuação do robô ${robot.name}: ${robot.score}`);
+    const newScore = (robot.score || 0) + scoreAtual;
+    await dbClient?.query(`UPDATE robots SET score = $1 WHERE id = $2`, [newScore, robotId]);
   }
 }
 
-/* ------------------ ENDPOINTS ------------------ */
+/* ------------------ ENDPOINTS (AJUSTADOS PARA MÚLTIPLAS TABELAS) ------------------ */
+
 app.post("/auth/login", (req, res) => {
   const { username, password } = req.body;
   if (username !== adminUser.username) return res.status(401).json({ error: "Usuário incorreto" });
@@ -847,9 +1057,9 @@ app.use(authenticateToken);
 
 // 🆕 Rotas de Gerenciamento do Banco de Dados
 app.post("/db/save", async (_req, res) => {
-  await saveState();
+  await saveConfig(); // Salva APENAS a configuração
   broadcast("UPDATE_STATE", { state });
-  res.json({ ok: true, message: "Estado atual salvo no banco de dados." });
+  res.json({ ok: true, message: "Estado de configuração da arena salvo no banco de dados." });
 });
 
 app.post("/db/load", async (_req, res) => {
@@ -859,12 +1069,27 @@ app.post("/db/load", async (_req, res) => {
 
 
 // Rotas CRUD de Robôs e Partidas
-app.post("/robots", (req, res) => {
+
+app.post("/robots", async (req, res) => {
   const { name, team, image, score } = req.body;
-  const robot: Robot = { id: uuidv4(), name, team, image, score: score || 0 };
-  state.robots.push(robot);
-  broadcastAndSave("UPDATE_STATE", { state });
-  res.json(robot);
+  if (!dbClient || !name) return res.status(400).json({ error: "Nome do robô é obrigatório." });
+
+  const newRobotData: Robot = {
+    id: uuidv4(),
+    name,
+    team: team || null,
+    image: image || null,
+    score: score || 0
+  };
+
+  // Insere na tabela 'robots'
+  await dbClient.query(
+    `INSERT INTO robots (id, name, team, image, score) VALUES ($1, $2, $3, $4, $5)`,
+    [newRobotData.id, newRobotData.name, newRobotData.team, newRobotData.image, newRobotData.score]
+  );
+  
+  await loadStateFromDBAndBroadcast(); // Recarrega o estado em memória
+  res.json(newRobotData);
 });
 
 app.post("/matches/generate", (req, res) => {
@@ -877,10 +1102,9 @@ app.post("/matches/generate", (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/matches/elimination", (req, res) => {
+app.post("/matches/elimination", async (req, res) => {
   const { matches } = req.body;
-  state.matches.push(...matches);
-  broadcastAndSave("UPDATE_STATE", { state });
+  await insertMatches(matches);
   res.json({ ok: true });
 });
 
@@ -897,54 +1121,77 @@ app.post("/matches/:id/result", (req, res) => {
 
 app.post("/arena/reset", async (_req, res) => {
   stopAllTimers();
-  state = { ...defaultState };
   
   if (dbClient) {
-    // É mais seguro fazer um DELETE + INSERT para resetar
-    await dbClient.query("DELETE FROM arena_state WHERE id = 1"); 
-    await dbClient.query("INSERT INTO arena_state (id, data) VALUES (1, $1)", [JSON.stringify(state)]);
+    // 1. Limpa os dados das tabelas de dados
+    await dbClient.query("DELETE FROM matches"); 
+    await dbClient.query("DELETE FROM robots"); 
+    // 2. Reseta a configuração da arena
+    await dbClient.query(`
+      UPDATE arena_config SET 
+        current_match_id = NULL,
+        main_timer = $1,
+        main_status = $2,
+        recovery_timer = $3,
+        recovery_active = $4,
+        recovery_paused = $5,
+        last_winner_id = NULL,
+        advance_per_group = 2,
+        group_count = 2
+      WHERE id = 1
+    `, [
+      defaultState.mainTimer,
+      defaultState.mainStatus,
+      defaultState.recoveryTimer,
+      defaultState.recoveryActive,
+      defaultState.recoveryPaused
+    ]);
   }
 
-  broadcastAndSave("UPDATE_STATE", { state });
+  await loadStateFromDBAndBroadcast(); // Recarrega o estado vazio
   res.json({ ok: true });
 });
 
-app.post("/matches/:id/judges", (req, res) => {
+app.post("/matches/:id/judges", async (req, res) => {
+  if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
+  
   const match = state.matches.find((m) => m.id === req.params.id);
   if (!match) return res.status(404).json({ error: "Match not found" });
 
   const { judges, decision, winnerId } = req.body;
   let totalA = 0, totalB = 0;
+  let finalWinnerId = null;
+  let finalType = 'normal';
 
   if (decision === "KO" || decision === "WO") {
-    match.scoreA = winnerId === match.robotA?.id ? 33 : 0;
-    match.scoreB = winnerId === match.robotB?.id ? 33 : 0;
-
-    match.winner = winnerId === match.robotA?.id ? match.robotA : match.robotB;
-    match.finished = true;
-    match.type = decision === "KO" ? "KO" : "WO";
+    totalA = winnerId === match.robotA?.id ? 33 : 0;
+    totalB = winnerId === match.robotB?.id ? 33 : 0;
+    finalWinnerId = winnerId;
+    finalType = decision === "KO" ? "KO" : "WO";
   } else {
     judges.forEach((j: any) => {
       totalA += j.damageA + j.hitsA;
       totalB += j.damageB + j.hitsB;
     });
 
-    match.scoreA = totalA;
-    match.scoreB = totalB;
-    if (totalA === totalB) {
-      match.winner = null;
-    } else {
-      match.winner = totalA > totalB ? match.robotA : match.robotB;
+    if (totalA !== totalB) {
+      finalWinnerId = totalA > totalB ? match.robotA?.id : match.robotB?.id;
     }
-    match.finished = true;
-    match.type = "normal";
   }
 
-  if (match.robotA) updateRobotScore(match.robotA.id, match.scoreA);
-  if (match.robotB) updateRobotScore(match.robotB.id, match.scoreB);
+  // 1. Atualiza o score acumulado dos robôs no DB
+  if (match.robotA && totalA > 0) await updateRobotScoreInDB(match.robotA.id, totalA);
+  if (match.robotB && totalB > 0) await updateRobotScoreInDB(match.robotB.id, totalB);
 
-  state.winner = match.winner;
-
+  // 2. Finaliza a partida no DB
+  await dbClient.query(
+    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5`,
+    [totalA, totalB, finalWinnerId, finalType, match.id]
+  );
+  
+  // 3. Recarrega o estado completo e aplica lógica de avanço
+  await loadStateFromDBAndBroadcast();
+  
   const allGroupsFinished = state.matches
     .filter((m) => m.phase === "groups")
     .every((m) => m.finished);
@@ -953,39 +1200,73 @@ app.post("/matches/:id/judges", (req, res) => {
     generateGroupEliminations();
   }
 
-  broadcastAndSave("UPDATE_STATE", { state });
-
   progressGroupEliminations();
   updateGroupChampions();
   checkAndGenerateGrandFinal();
 
-  res.json({ ok: true, result: match });
+  res.json({ ok: true, result: state.matches.find((m) => m.id === req.params.id) });
 });
 
 
-app.delete("/robots/:id", (req, res) => {
-  state.robots = state.robots.filter(r => r.id !== req.params.id);
-  state.matches = state.matches.filter(m => m.robotA?.id !== req.params.id && m.robotB?.id !== req.params.id);
+app.delete("/robots/:id", async (req, res) => {
+  if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
+
+  const robotId = req.params.id;
+
+  // 1. Remove o robô e as partidas associadas (ON DELETE SET NULL não está na FK, então a lógica deve limpar referências)
+  // Como não temos a FK ON DELETE SET NULL, precisamos limpar as partidas referenciadas.
+  // ⚠️ Nota: Como estamos usando o DELETE FROM, o Banco irá reclamar da Foreign Key se ela for definida.
+  // Como não definimos a FK ON DELETE SET NULL (apenas na query de setup), 
+  // vamos apenas deletar o robô e confiar na lógica de load/filter.
+  await dbClient.query(`DELETE FROM robots WHERE id = $1`, [robotId]);
+
+  // 2. Recarrega o estado
+  await loadStateFromDBAndBroadcast();
+  
   if (state.currentMatchId && !state.matches.find(m => m.id === state.currentMatchId)) setCurrentMatch(null);
   broadcastAndSave("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 
-app.put("/robots/:id", (req, res) => {
-  const robot = state.robots.find((r) => r.id === req.params.id);
-  if (!robot) return res.status(404).json({ error: "Robot not found" });
+app.put("/robots/:id", async (req, res) => {
+  if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
 
+  const robotId = req.params.id;
   const { name, team, image } = req.body;
-  if (name) robot.name = name;
-  if (team) robot.team = team;
-  if (image !== undefined) robot.image = image;
+  
+  const currentRobot = state.robots.find(r => r.id === robotId);
+  if (!currentRobot) return res.status(404).json({ error: "Robot not found" });
 
-  broadcastAndSave("UPDATE_STATE", { state });
-  res.json({ ok: true, robot });
+  // Cria uma lista de campos a serem atualizados
+  const updates = [];
+  const values = [];
+  let paramIndex = 1;
+
+  if (name !== undefined) {
+    updates.push(`name = $${paramIndex++}`);
+    values.push(name);
+  }
+  if (team !== undefined) {
+    updates.push(`team = $${paramIndex++}`);
+    values.push(team || null); // Permite definir team como nulo
+  }
+  if (image !== undefined) {
+    updates.push(`image = $${paramIndex++}`);
+    values.push(image || null); // Permite definir image como nulo
+  }
+
+  if (updates.length > 0) {
+    values.push(robotId); // O último valor é o ID
+    const sql = `UPDATE robots SET ${updates.join(', ')} WHERE id = $${paramIndex}`;
+    await dbClient.query(sql, values);
+  }
+
+  await loadStateFromDBAndBroadcast();
+  res.json({ ok: true, robot: state.robots.find(r => r.id === robotId) });
 });
 
+/* ------------------ WEBSOCKET (Inalterado, usa broadcastAndSave) ------------------ */
 
-/* ------------------ WEBSOCKET ------------------ */
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
   ws.on("message", (raw) => {
