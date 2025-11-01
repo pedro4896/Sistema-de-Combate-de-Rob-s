@@ -1,4 +1,8 @@
 import React, { useState } from "react";
+// Definindo a URL do backend. Se o frontend e backend não estão no mesmo Docker,
+// é necessário especificar o host:porta do backend.
+const BACKEND_URL = "http://localhost:8080"; 
+
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -11,7 +15,8 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:8080/auth/login", {
+      // Usando a constante BACKEND_URL definida acima
+      const res = await fetch(`${BACKEND_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -27,10 +32,11 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
       const data = await res.json();
       localStorage.setItem("token", data.token);
       setLoading(false);
-      onLogin();
-      window.location.href = "/"; // Força reload para atualizar estado de login
-    } catch {
-      setError("Erro ao conectar com o servidor");
+      onLogin(); 
+      // Não usamos window.location.href, o App.tsx trata a navegação
+    } catch (e) {
+      console.error(e);
+      setError("Erro ao conectar com o servidor. Verifique se o backend está rodando em http://localhost:8080.");
       setLoading(false);
     }
   };
@@ -64,7 +70,6 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             </div>
           )}
 
-          {/* Botão igual ao estilo da navbar */}
           <button
             type="submit"
             disabled={loading}
@@ -78,6 +83,10 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
         <p className="mt-6 text-xs text-white/50">
           Acesso restrito ao administrador
+        </p>
+        {/* Adicionando a dica de credenciais para evitar falha de autenticação */}
+        <p className="text-xs text-red-500 mt-2">
+          Credenciais: usuário 'admin', senha '123456'
         </p>
       </div>
     </div>

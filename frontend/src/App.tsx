@@ -7,12 +7,13 @@ import Screen from "./pages/Screen";
 import Ranking from "./pages/Ranking";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
+import Tournaments from "./pages/Tournaments"; // 👈 Importa o novo componente
 
-import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut, Home } from "lucide-react";
+import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut, Home, List } from "lucide-react";
 
 export default function App() {
   const [tab, setTab] = useState<
-    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing"
+    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing" | "tournaments" // 👈 Atualizado para incluir 'tournaments'
   >("landing");
 
   const [isLogged, setIsLogged] = useState(!!localStorage.getItem("token"));
@@ -38,6 +39,21 @@ export default function App() {
     </button>
   );
 
+  // Função de callback para ser usada no Login
+  const handleLogin = () => {
+    setIsLogged(true);
+    // Após o login, redireciona o usuário para a nova página de gerenciamento de torneios
+    setTab("tournaments"); 
+  };
+  
+  // Função de callback para ser usada no Logout
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setIsLogged(false);
+    // Após o logout, volta para a página pública de Ranking
+    setTab("ranking");
+  };
+
   return (
     <div className="min-h-screen">
       {/* ======= HEADER ======= */}
@@ -45,14 +61,18 @@ export default function App() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-2">
           {/* LOGO E NOME ALINHADOS NA HORIZONTAL */}
           <div className="flex items-center gap-2">
-            <a href="https://www.instagram.com/equipe_spectron" target="_blank">
+            {/* CORRIGIDO: Agora usa setTab para navegação interna, evitando recarga de página */}
+            <a onClick={() => setTab("landing")} className="cursor-pointer">
               <img
-                src="/logoSpectron.svg" // Caminho correto para a imagem dentro da pasta public
+                src="/logoSpectron.svg"
                 alt="Logo Spectron"
-                className="w-20 h-20 object-contain" // Ajuste o tamanho e margem à direita
+                className="w-20 h-20 object-contain"
               />
             </a>
-          <h1 className="text-2xl font-extrabold tracking-widest">
+          <h1 
+            onClick={() => setTab("landing")}
+            className="text-2xl font-extrabold tracking-widest cursor-pointer"
+          >
             Spectro<span className="text-arena-accent">Clash</span>
           </h1>
           </div>
@@ -67,6 +87,7 @@ export default function App() {
             {/* Páginas restritas (apenas admin logado) */}
             {isLogged && (
               <>
+                <Tab id="tournaments" icon={<List size={18} />} label="Torneios" /> {/* 👈 Nova aba */}
                 <Tab id="robots" icon={<Users size={18} />} label="Robôs" />
                 <Tab id="bracket" icon={<Sword size={18} />} label="Chaveamento" />
                 <Tab id="judge" icon={<Timer size={18} />} label="Luta" />
@@ -79,16 +100,8 @@ export default function App() {
               <Tab id="login" icon={<LogIn size={16} />} label="Login" />
             ) : (
               <button
-                onClick={() => {
-                  localStorage.removeItem("token");
-                  setIsLogged(false);
-                  setTab("ranking");
-                }}
-                className={`btn mx-1 flex items-center gap-1 ${
-                  tab === "login"
-                    ? "btn-accent text-black"
-                    : "bg-arena-card text-white"
-                } hover:opacity-90 transition`}
+                onClick={handleLogout} // Usa a função corrigida
+                className={`btn mx-1 flex items-center gap-1 bg-arena-card text-white hover:opacity-90 transition`}
               >
                 <LogOut size={16} />
                 <span className="hidden sm:inline">Sair</span>
@@ -109,9 +122,10 @@ export default function App() {
         {tab === "screen" && <Screen />}
 
         {/* Login */}
-        {tab === "login" && <Login onLogin={() => setIsLogged(true)} />}
+        {tab === "login" && <Login onLogin={handleLogin} />} {/* Usa a função corrigida */}
 
         {/* Páginas restritas (apenas admin logado) */}
+        {isLogged && tab === "tournaments" && <Tournaments />} {/* 👈 Novo componente renderizado */}
         {isLogged && tab === "robots" && <Robots />}
         {isLogged && tab === "bracket" && <Bracket />}
         {isLogged && tab === "judge" && <Judge />}
@@ -119,7 +133,7 @@ export default function App() {
 
         {/* Tentativa de acessar restrita sem login */}
         {!isLogged &&
-          ["robots", "bracket", "judge", "scores"].includes(tab) && (
+          ["robots", "bracket", "judge", "scores", "tournaments"].includes(tab) && (
             <div className="text-center text-white/70 mt-20">
               <h2 className="text-2xl font-bold mb-2">🔒 Acesso restrito</h2>
               <p>Faça login como administrador para acessar esta seção.</p>
