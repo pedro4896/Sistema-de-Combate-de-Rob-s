@@ -3,7 +3,7 @@ import cors from "cors";
 import { createServer } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
-import { ArenaState, Robot, Match, GroupTableItem } from "./types";
+import { ArenaState, Robot, Match, GroupTableItem, Tournament } from "./types"; // Adicionado Tournament
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { Client, QueryResult } from "pg";
@@ -12,9 +12,9 @@ const SECRET_KEY = process.env.ARENA_SECRET || "arena_secret_2025";
 const PORT = Number(process.env.PORT || 8080);
 
 const adminUser = {
-  username: "admin",
-  passwordHash: bcrypt.hashSync("123456", 8),
-  role: "admin",
+  username: "admin",
+  passwordHash: bcrypt.hashSync("123456", 8),
+  role: "admin",
 };
 
 const app = express();
@@ -27,18 +27,23 @@ const wss = new WebSocketServer({ server });
 
 // Estado inicial padrão (fallback)
 const defaultState: ArenaState = {
-  robots: [],
-  matches: [],
-  currentMatchId: null,
-  mainTimer: 0,
-  mainStatus: "idle",
-  recoveryTimer: 0,
-  recoveryActive: false,
-  recoveryPaused: false,
-  winner: null,
-  lastWinner: null,
-  ranking: [],
-  groupTables: {}
+  robots: [],
+  matches: [],
+  currentMatchId: null,
+  mainTimer: 0,
+  mainStatus: "idle",
+  recoveryTimer: 0,
+  recoveryActive: false,
+  recoveryPaused: false,
+  winner: null,
+  lastWinner: null,
+  ranking: [],
+  groupTables: {},
+  // Novos campos para gerenciamento de torneios
+  tournamentId: null, 
+  tournaments: [],
+  advancePerGroup: 2,
+  groupCount: 2,
 };
 
 // Variável para armazenar o estado em memória e a conexão DB
@@ -51,12 +56,12 @@ let dbClient: Client | null = null;
 // ===============================================
 
 /**
- * Cria as tabelas robots, matches e arena_config se elas não existirem.
+ * Cria as tabelas robots, matches, tournaments e arena_config se elas não existirem.
  */
 async function setupDatabase() {
   if (!dbClient) return;
   
-  // Tabela 1: Robôs
+  // Tabela 1: Robôs (Inalterada)
   await dbClient.query(`
     CREATE TABLE IF NOT EXISTS robots (
         id VARCHAR(255) PRIMARY KEY,
@@ -66,8 +71,19 @@ async function setupDatabase() {
         score INT DEFAULT 0
     );
   `);
+
+  // Tabela 4: Torneios (NOVA)
+  await dbClient.query(`
+    CREATE TABLE IF NOT EXISTS tournaments (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        status VARCHAR(50) DEFAULT 'draft', -- 'draft', 'active', 'finished'
+        advance_per_group INT DEFAULT 2,
+        group_count INT DEFAULT 2
+    );
+  `);
   
-  // Tabela 2: Configuração Global (timers, status, configs de torneio)
+  // Tabela 2: Configuração Global (timers, status, configs de torneio) - Atualizada
   await dbClient.query(`
     CREATE TABLE IF NOT EXISTS arena_config (
         id INT PRIMARY KEY,
@@ -79,14 +95,16 @@ async function setupDatabase() {
         recovery_paused BOOLEAN DEFAULT FALSE,
         last_winner_id VARCHAR(255),
         advance_per_group INT DEFAULT 2,
-        group_count INT DEFAULT 2
+        group_count INT DEFAULT 2,
+        active_tournament_id VARCHAR(255) -- NOVO: Torneio ativo
     );
   `);
   
-  // Tabela 3: Partidas
+  // Tabela 3: Partidas - Atualizada com tournament_id
   await dbClient.query(`
     CREATE TABLE IF NOT EXISTS matches (
         id VARCHAR(255) PRIMARY KEY,
+        tournament_id VARCHAR(255) NOT NULL, -- NOVO: Chave estrangeira
         phase VARCHAR(50) NOT NULL,
         round INT NOT NULL,
         group_label VARCHAR(50),
@@ -100,7 +118,7 @@ async function setupDatabase() {
     );
   `);
 
-  // Garante que a linha de configuração exista
+  // Garante que a linha de configuração exista (Atualizada com active_tournament_id)
   const configRes = await dbClient.query("SELECT * FROM arena_config WHERE id = 1");
   if (configRes.rows.length === 0) {
     await dbClient.query(`
@@ -117,7 +135,7 @@ async function setupDatabase() {
 
 
 /**
- * Salva apenas os dados de configuração/estado em tempo real (timers, status)
+ * Salva apenas os dados de configuração/estado em tempo real (timers, status, torneio ativo)
  */
 async function saveConfig() {
   if (!dbClient) return;
@@ -133,7 +151,8 @@ async function saveConfig() {
         recovery_paused = $6,
         last_winner_id = $7,
         advance_per_group = $8,
-        group_count = $9
+        group_count = $9,
+        active_tournament_id = $10
       WHERE id = 1;
     `;
     await dbClient.query(sql, [
@@ -146,6 +165,7 @@ async function saveConfig() {
       config.lastWinner?.id,
       config.advancePerGroup || 2,
       config.groupCount || 2,
+      config.tournamentId || null,
     ]);
   } catch (error) {
     console.error("❌ Erro ao salvar configuração no DB:", error);
@@ -153,19 +173,19 @@ async function saveConfig() {
 }
 
 /**
- * Carrega todos os dados das três tabelas e reconstrói o objeto ArenaState em memória.
+ * Carrega todos os dados das tabelas e reconstrói o objeto ArenaState em memória.
  */
 async function loadStateFromDB(): Promise<ArenaState> {
   if (!dbClient) return defaultState;
 
   try {
-    const [robotsRes, matchesRes, configRes] = await Promise.all([
+    const [robotsRes, tournamentsRes, configRes] = await Promise.all([
       dbClient.query("SELECT * FROM robots ORDER BY name"),
-      dbClient.query("SELECT * FROM matches ORDER BY round, group_label, id"),
+      dbClient.query("SELECT * FROM tournaments ORDER BY name"), // Carrega todos os torneios
       dbClient.query("SELECT * FROM arena_config WHERE id = 1"),
     ]);
 
-    // Mapeia Robôs
+    // Mapeia Robôs (Inalterado)
     const robots: Robot[] = robotsRes.rows.map(row => ({
       id: row.id,
       name: row.name,
@@ -178,20 +198,43 @@ async function loadStateFromDB(): Promise<ArenaState> {
     const config = configRes.rows[0];
     if (!config) return defaultState;
 
-    // Mapeia Partidas
-    const matches: Match[] = matchesRes.rows.map(row => ({
-      id: row.id,
-      phase: row.phase as any,
-      round: row.round,
-      group: row.group_label,
-      robotA: row.robot_a_id ? robotMap[row.robot_a_id] : null,
-      robotB: row.robot_b_id ? robotMap[row.robot_b_id] : null,
-      scoreA: row.score_a,
-      scoreB: row.score_b,
-      winner: row.winner_id ? robotMap[row.winner_id] : null,
-      finished: row.finished,
-      type: row.type as any,
+    // Mapeia Torneios (Novo)
+    const tournaments: Tournament[] = tournamentsRes.rows.map(row => ({
+        id: row.id,
+        name: row.name,
+        status: row.status as any,
+        advancePerGroup: row.advance_per_group,
+        groupCount: row.group_count,
     }));
+    
+    const activeTournamentId = config.active_tournament_id;
+
+    let matches: Match[] = [];
+    let currentTournament: Tournament | undefined;
+
+    // Carrega apenas as partidas do torneio ativo
+    if (activeTournamentId) {
+        const matchesRes = await dbClient.query(
+            "SELECT * FROM matches WHERE tournament_id = $1 ORDER BY round, group_label, id",
+            [activeTournamentId]
+        );
+        matches = matchesRes.rows.map(row => ({
+            id: row.id,
+            tournamentId: row.tournament_id,
+            phase: row.phase as any,
+            round: row.round,
+            group: row.group_label,
+            robotA: row.robot_a_id ? robotMap[row.robot_a_id] : null,
+            robotB: row.robot_b_id ? robotMap[row.robot_b_id] : null,
+            scoreA: row.score_a,
+            scoreB: row.score_b,
+            winner: row.winner_id ? robotMap[row.winner_id] : null,
+            finished: row.finished,
+            type: row.type as any,
+        }));
+        
+        currentTournament = tournaments.find(t => t.id === activeTournamentId);
+    }
 
     const newState: ArenaState = {
       robots,
@@ -206,12 +249,21 @@ async function loadStateFromDB(): Promise<ArenaState> {
       lastWinner: config.last_winner_id ? robotMap[config.last_winner_id] : null,
       ranking: [],
       groupTables: {},
-      // Propriedades de configuração do torneio
-      advancePerGroup: config.advance_per_group || 2,
-      groupCount: config.group_count || 2,
+      // Propriedades do torneio ativo
+      tournamentId: activeTournamentId,
+      tournaments,
+      advancePerGroup: currentTournament?.advancePerGroup || config.advance_per_group || 2,
+      groupCount: currentTournament?.groupCount || config.group_count || 2,
     };
 
-    newState.groupTables = computeGroupTables(robots, matches);
+    if (newState.tournamentId) {
+      newState.groupTables = computeGroupTables(robots, matches);
+    }
+    
+    // Assegura que o currentMatchId está no torneio ativo
+    if (newState.currentMatchId && !matches.some(m => m.id === newState.currentMatchId)) {
+        newState.currentMatchId = matches.find(m => !m.finished)?.id ?? null;
+    }
 
     return newState;
   } catch (error) {
@@ -429,6 +481,7 @@ function generateGroupMatches(groups: Robot[][]): Match[] {
             for (const [A, B] of rodada) {
                 matches.push({
                     id: uuidv4(),
+                    tournamentId: state.tournamentId, // Adiciona o ID do torneio
                     phase: "groups",
                     round: round + 1,
                     group: label,
@@ -459,7 +512,8 @@ function makeItem(r: Robot): GroupTableItem {
 function computeGroupTables(robots: Robot[] = state.robots, matches: Match[] = state.matches): Record<string, GroupTableItem[]> {
     const tables: Record<string, Record<string, GroupTableItem>> = {};
     const robotMap = Object.fromEntries(robots.map(r => [r.id, r]));
-    const groupMatches = matches.filter((m) => m.phase === "groups");
+    // Filtra matches pelo torneio ativo
+    const groupMatches = matches.filter((m) => m.phase === "groups" && m.tournamentId === state.tournamentId);
 
     const groups = Array.from(
         new Set(groupMatches.map((m) => m.group).filter(Boolean))
@@ -516,7 +570,7 @@ function generateGroupEliminations() {
 
   for (const g in state.groupTables) {
     const already = state.matches.some(
-      (m) => m.phase === "elimination" && m.group === g
+      (m) => m.phase === "elimination" && m.group === g && m.tournamentId === state.tournamentId
     );
     if (already) continue;
 
@@ -536,6 +590,7 @@ function generateGroupEliminations() {
 
       newMatches.push({
         id: uuidv4(),
+        tournamentId: state.tournamentId, // Adiciona o ID do torneio
         phase: "elimination",
         round: 1,
         group: g,
@@ -565,7 +620,7 @@ function checkAndGenerateGrandFinal() {
 
   for (const g of groupLabels) {
     const gMatches = state.matches
-      .filter((m) => m.phase === "elimination" && m.group === g)
+      .filter((m) => m.phase === "elimination" && m.group === g && m.tournamentId === state.tournamentId)
       .sort((a, b) => a.round - b.round);
 
     if (gMatches.length === 0) return;
@@ -583,7 +638,7 @@ function checkAndGenerateGrandFinal() {
   }
 
   const already = state.matches.some(
-    (m) => m.phase === "elimination" && !m.group
+    (m) => m.phase === "elimination" && !m.group && m.tournamentId === state.tournamentId
   );
   if (already) return;
 
@@ -602,6 +657,7 @@ function checkAndGenerateGrandFinal() {
 
     finals.push({
       id: uuidv4(),
+      tournamentId: state.tournamentId, // Adiciona o ID do torneio
       phase: "elimination",
       round: 1,
       group: null,
@@ -629,7 +685,7 @@ function progressGroupEliminations() {
 
   for (const g of groupLabels) {
     const groupMatches = state.matches
-      .filter((m) => m.phase === "elimination" && m.group === g)
+      .filter((m) => m.phase === "elimination" && m.group === g && m.tournamentId === state.tournamentId)
       .sort((a, b) => a.round - b.round);
 
     if (groupMatches.length === 0) continue;
@@ -662,6 +718,7 @@ function progressGroupEliminations() {
 
       newMatches.push({
         id: uuidv4(),
+        tournamentId: state.tournamentId, // Adiciona o ID do torneio
         phase: "elimination",
         round: nextRound,
         group: g,
@@ -688,7 +745,7 @@ function updateGroupChampions() {
   let changed = false;
   for (const g of groupLabels) {
     const gMatches = state.matches
-      .filter((m) => m.phase === "elimination" && m.group === g)
+      .filter((m) => m.phase === "elimination" && m.group === g && m.tournamentId === state.tournamentId)
       .sort((a, b) => a.round - b.round);
 
     if (gMatches.length === 0) continue;
@@ -718,8 +775,8 @@ function updateGroupChampions() {
 }
 
 function generateEliminationFromGroups() {
-  const tables = computeGroupTables();
-  state.groupTables = tables;
+  state.groupTables = computeGroupTables();
+  const tables = state.groupTables;
   const groupNames = Object.keys(tables).sort();
   const advancePerGroup = (state as any).advancePerGroup || 2;
 
@@ -740,6 +797,7 @@ function generateEliminationFromGroups() {
   for (let i = 0; i < Math.min(left.length, right.length); i++) {
     elimMatches.push({
       id: uuidv4(),
+      tournamentId: state.tournamentId, // Adiciona o ID do torneio
       phase: "elimination",
       round: 1,
       group: null,
@@ -760,6 +818,7 @@ function generateEliminationFromGroups() {
     for (let i = 0; i < nextCount; i++) {
       elimMatches.push({
         id: uuidv4(),
+        tournamentId: state.tournamentId, // Adiciona o ID do torneio
         phase: "elimination",
         round: round + 1,
         group: null,
@@ -778,7 +837,7 @@ function generateEliminationFromGroups() {
 
   insertMatches(elimMatches);
   
-  const first = state.matches.find(m => !m.finished);
+  const first = state.matches.find(m => !m.finished && m.tournamentId === state.tournamentId);
   setCurrentMatch(first?.id || null);
   broadcastAndSave("UPDATE_STATE", { state });
 }
@@ -793,10 +852,10 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
     else if (scoreB > scoreA) winnerId = m.robotB.id;
   }
   
-  // 1. Atualiza a partida no DB
+  // 1. Atualiza a partida no DB (Adiciona tournament_id no WHERE)
   await dbClient.query(
-    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5`,
-    [scoreA, scoreB, winnerId, type, id]
+    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5 AND tournament_id = $6`,
+    [scoreA, scoreB, winnerId, type, id, m.tournamentId]
   );
   
   // 2. Atualiza o score acumulado dos robôs no DB
@@ -806,7 +865,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
   // 3. Recarrega o estado completo
   await loadStateFromDBAndBroadcast();
 
-  // 4. Aplica lógica de avanço
+  // 4. Aplica lógica de avanço (usa lógica do estado recarregado)
   const currentMatchInState = state.matches.find(mm => mm.id === id);
   if (currentMatchInState) {
     const isGroupPhase = currentMatchInState.phase === "groups";
@@ -816,11 +875,12 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
       if (allGroupsDone) generateEliminationFromGroups();
     } else {
       const round = currentMatchInState.round;
-      const currentMatchesInRound = state.matches.filter(x => x.phase === "elimination" && x.round === round && x.group === currentMatchInState.group);
+      // Filtra matches pelo torneio ativo
+      const currentMatchesInRound = state.matches.filter(x => x.phase === "elimination" && x.round === round && x.group === currentMatchInState.group && x.tournamentId === currentMatchInState.tournamentId);
       
       if (currentMatchesInRound.every(x => x.finished)) {
           const winners = currentMatchesInRound.map(x => x.winner).filter(Boolean) as Robot[];
-          const nextRoundMatches = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1 && x.group === currentMatchInState.group);
+          const nextRoundMatches = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1 && x.group === currentMatchInState.group && x.tournamentId === currentMatchInState.tournamentId);
           
           const queries = [];
           for (let i = 0; i < winners.length; i++) {
@@ -829,10 +889,10 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
               
               if (i % 2 === 0) {
                   target.robotA = winners[i];
-                  queries.push(dbClient.query(`UPDATE matches SET robot_a_id = $1 WHERE id = $2`, [winners[i].id, target.id]));
+                  queries.push(dbClient.query(`UPDATE matches SET robot_a_id = $1 WHERE id = $2 AND tournament_id = $3`, [winners[i].id, target.id, target.tournamentId]));
               } else {
                   target.robotB = winners[i];
-                  queries.push(dbClient.query(`UPDATE matches SET robot_b_id = $1 WHERE id = $2`, [winners[i].id, target.id]));
+                  queries.push(dbClient.query(`UPDATE matches SET robot_b_id = $1 WHERE id = $2 AND tournament_id = $3`, [winners[i].id, target.id, target.tournamentId]));
               }
           }
           await Promise.all(queries);
@@ -847,7 +907,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
   }
 
   // 5. Determina a próxima partida e atualiza a configuração
-  const next = state.matches.find(x => !x.finished);
+  const next = state.matches.find(x => !x.finished && x.tournamentId === state.tournamentId);
   if (next) setCurrentMatch(next.id);
   else {
     state.currentMatchId = null;
@@ -860,15 +920,16 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
  * Insere múltiplas partidas no DB e recarrega o estado.
  */
 async function insertMatches(matches: Match[]) {
-  if (!dbClient) return;
+  if (!dbClient || !state.tournamentId) return;
 
   const matchPromises = matches.map(m => {
     const isBye = m.robotA?.id === "bye" || m.robotB?.id === "bye";
     return dbClient?.query(
-      `INSERT INTO matches (id, phase, round, group_label, robot_a_id, robot_b_id, score_a, score_b, winner_id, finished, type) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO matches (id, tournament_id, phase, round, group_label, robot_a_id, robot_b_id, score_a, score_b, winner_id, finished, type) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         m.id,
+        state.tournamentId, // Usa o ID do torneio ativo
         m.phase,
         m.round,
         m.group,
@@ -888,15 +949,90 @@ async function insertMatches(matches: Match[]) {
 }
 
 
-/* ------------------ GERAÇÃO PRINCIPAL ------------------ */
+/* ------------------ GERAÇÃO PRINCIPAL - Atualizada para gerenciar torneios ------------------ */
 
-async function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
+async function finalizeActiveTournament() {
+  if (!dbClient || !state.tournamentId) return;
+
+  await dbClient.query(
+    `UPDATE tournaments SET status = $1 WHERE id = $2`,
+    ['finished', state.tournamentId]
+  );
+  
+  // Limpa a referência do torneio ativo, mas mantém as configs
+  await dbClient.query(`UPDATE arena_config SET active_tournament_id = NULL WHERE id = 1`);
+  state.tournamentId = null;
+  state.currentMatchId = null;
+
+  await loadStateFromDBAndBroadcast();
+}
+
+async function activateTournament(tournamentId: string) {
+    if (!dbClient) return;
+    
+    const tournament = state.tournaments.find(t => t.id === tournamentId);
+    if (!tournament) return;
+
+    // 1. Se houver um torneio ativo, finalize-o
+    if (state.tournamentId && state.tournamentId !== tournamentId) {
+        await dbClient.query(
+            `UPDATE tournaments SET status = $1 WHERE id = $2`,
+            ['finished', state.tournamentId]
+        );
+    }
+    
+    // 2. Define o novo torneio como ativo e com status 'active'
+    await dbClient.query(
+        `UPDATE arena_config SET active_tournament_id = $1, advance_per_group = $2, group_count = $3 WHERE id = 1`,
+        [tournamentId, tournament.advancePerGroup, tournament.groupCount]
+    );
+    await dbClient.query(
+        `UPDATE tournaments SET status = $1 WHERE id = $2`,
+        ['active', tournamentId]
+    );
+
+    // 3. Recarrega o estado completo e transmite
+    await loadStateFromDBAndBroadcast();
+    
+    // 4. Define a primeira partida do novo torneio ativo
+    const nextMatch = state.matches.find(m => m.tournamentId === tournamentId && !m.finished);
+    setCurrentMatch(nextMatch?.id ?? null);
+    
+    // Garante que o estado final seja salvo e transmitido
+    broadcastAndSave("UPDATE_STATE", { state });
+}
+
+async function generateTournament(name: string, groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2) {
   if (!dbClient) return;
+
+  const newTournamentId = uuidv4();
+  
+  // 1. Finaliza o torneio ativo atual (se houver)
+  if (state.tournamentId) {
+    await finalizeActiveTournament();
+  }
+
+  // 2. Cria o novo torneio no DB
+  await dbClient.query(
+    `INSERT INTO tournaments (id, name, status, advance_per_group, group_count) VALUES ($1, $2, $3, $4, $5)`,
+    [newTournamentId, name, 'active', advancePerGroup, groupCount]
+  );
+  
+  // 3. Define o novo torneio como ativo
+  await dbClient.query(
+    `UPDATE arena_config SET active_tournament_id = $1, advance_per_group = $2, group_count = $3 WHERE id = 1`,
+    [newTournamentId, advancePerGroup, groupCount]
+  );
+
+  // 4. Atualiza o estado em memória para o novo torneio ser o contexto para matches
+  state.tournamentId = newTournamentId;
+  (state as any).advancePerGroup = advancePerGroup;
+  (state as any).groupCount = groupCount;
   
   const robots = [...state.robots];
   if (robots.length < 2) {
-    await dbClient.query("DELETE FROM matches");
-    state = await loadStateFromDB();
+    state.matches = [];
+    state.currentMatchId = null;
     broadcastAndSave("UPDATE_STATE", { state });
     return;
   }
@@ -906,14 +1042,11 @@ async function generateTournament(groupCount = 2, robotsPerGroup = 4, advancePer
 
   const groupMatches = generateGroupMatches(groups);
 
-  // Limpa e insere novas partidas
-  await dbClient.query("DELETE FROM matches");
-  await insertMatches(groupMatches);
+  // 5. Insere novas partidas para o novo torneio
+  await insertMatches(groupMatches); // insertMatches usa state.tournamentId
 
-  // Atualiza as configurações
-  (state as any).advancePerGroup = advancePerGroup;
-  (state as any).groupCount = groups.length;
-  state.currentMatchId = state.matches[0]?.id ?? null;
+  // 6. Define a primeira partida a ser jogada e atualiza o estado
+  state.currentMatchId = state.matches.find(m => m.tournamentId === newTournamentId)?.id ?? null;
   state.lastWinner = null;
   
   broadcastAndSave("UPDATE_STATE", { state });
@@ -961,6 +1094,7 @@ app.get("/state", (_req, res) => res.json({ state }));
 app.get("/ranking", (_req, res) => {
   const robotMap = Object.fromEntries(state.robots.map(r => [r.id, r]));
 
+  // Filtra partidas pelo torneio ativo (ou por todas se não houver torneio ativo)
   const matches = state.matches.filter(
     (m) => m.phase === "groups" || m.phase === "elimination"
   );
@@ -1056,6 +1190,39 @@ app.post("/db/load", async (_req, res) => {
   res.json({ ok: true, message: "Estado recarregado do banco de dados." });
 });
 
+// 🆕 Rotas de Torneios
+app.get("/tournaments", async (_req, res) => {
+    if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
+    const result = await dbClient.query("SELECT * FROM tournaments ORDER BY name");
+    res.json({ tournaments: result.rows.map(row => ({
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        advancePerGroup: row.advance_per_group,
+        groupCount: row.group_count,
+    })) });
+});
+
+app.post("/tournaments/:id/activate", async (req, res) => {
+    await activateTournament(req.params.id);
+    res.json({ ok: true, message: `Torneio ${req.params.id} ativado.` });
+});
+
+app.post("/tournaments/:id/finish", async (req, res) => {
+    if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
+    await dbClient.query(
+        `UPDATE tournaments SET status = $1 WHERE id = $2`,
+        ['finished', req.params.id]
+    );
+    if (state.tournamentId === req.params.id) {
+        // Se o torneio ativo foi finalizado, desativa o ID e recarrega
+        await dbClient.query(`UPDATE arena_config SET active_tournament_id = NULL WHERE id = 1`);
+        state.tournamentId = null;
+    }
+    await loadStateFromDBAndBroadcast();
+    res.json({ ok: true, message: `Torneio ${req.params.id} finalizado.` });
+});
+
 
 // Rotas CRUD de Robôs e Partidas
 
@@ -1081,16 +1248,20 @@ app.post("/robots", async (req, res) => {
   res.json(newRobotData);
 });
 
+// Atualizado para receber nome e chamar a nova generateTournament
 app.post("/matches/generate", (req, res) => {
-  let { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
+  let { name, groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
+  if (!name) return res.status(400).json({ error: "Nome do torneio é obrigatório." });
+  
   const total = state.robots.length;
   groupCount = Math.max(1, Math.min(groupCount, total));
   robotsPerGroup = Math.max(2, robotsPerGroup);
   advancePerGroup = Math.max(1, advancePerGroup);
-  generateTournament(groupCount, robotsPerGroup, advancePerGroup);
-  res.json({ ok: true });
+  generateTournament(name, groupCount, robotsPerGroup, advancePerGroup);
+  res.json({ ok: true, message: `Torneio "${name}" gerado e ativado.` });
 });
 
+// Rota para inserir partidas de eliminação - Atualizada para usar o ID do torneio ativo
 app.post("/matches/elimination", async (req, res) => {
   const { matches } = req.body;
   await insertMatches(matches);
@@ -1115,7 +1286,8 @@ app.post("/arena/reset", async (_req, res) => {
     // 1. Limpa os dados das tabelas de dados
     await dbClient.query("DELETE FROM matches"); 
     await dbClient.query("DELETE FROM robots"); 
-    // 2. Reseta a configuração da arena
+    await dbClient.query("DELETE FROM tournaments"); // NOVO: Limpa torneios
+    // 2. Reseta a configuração da arena (incluindo active_tournament_id)
     await dbClient.query(`
       UPDATE arena_config SET 
         current_match_id = NULL,
@@ -1126,7 +1298,8 @@ app.post("/arena/reset", async (_req, res) => {
         recovery_paused = $5,
         last_winner_id = NULL,
         advance_per_group = 2,
-        group_count = 2
+        group_count = 2,
+        active_tournament_id = NULL -- NOVO: Reseta o torneio ativo
       WHERE id = 1
     `, [
       defaultState.mainTimer,
@@ -1172,17 +1345,17 @@ app.post("/matches/:id/judges", async (req, res) => {
   if (match.robotA && totalA > 0) await updateRobotScoreInDB(match.robotA.id, totalA);
   if (match.robotB && totalB > 0) await updateRobotScoreInDB(match.robotB.id, totalB);
 
-  // 2. Finaliza a partida no DB
+  // 2. Finaliza a partida no DB (Atualizado com tournament_id)
   await dbClient.query(
-    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5`,
-    [totalA, totalB, finalWinnerId, finalType, match.id]
+    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5 AND tournament_id = $6`,
+    [totalA, totalB, finalWinnerId, finalType, match.id, match.tournamentId]
   );
   
   // 3. Recarrega o estado completo e aplica lógica de avanço
   await loadStateFromDBAndBroadcast();
   
   const allGroupsFinished = state.matches
-    .filter((m) => m.phase === "groups")
+    .filter((m) => m.phase === "groups" && m.tournamentId === state.tournamentId)
     .every((m) => m.finished);
 
   if (allGroupsFinished) {
@@ -1205,11 +1378,16 @@ app.delete("/robots/:id", async (req, res) => {
   // 1. Remove o robô
   await dbClient.query(`DELETE FROM robots WHERE id = $1`, [robotId]);
 
-  // 2. Recarrega o estado
+  // 2. Recarrega o estado e ajusta partidas
   await loadStateFromDBAndBroadcast();
   
   if (state.currentMatchId && !state.matches.find(m => m.id === state.currentMatchId)) setCurrentMatch(null);
-  broadcastAndSave("UPDATE_STATE", { state });
+  
+  // Atualiza as referências de robô nas partidas pendentes do torneio ativo
+  await dbClient.query(`UPDATE matches SET robot_a_id = NULL WHERE robot_a_id = $1 AND finished = FALSE AND tournament_id = $2`, [robotId, state.tournamentId]);
+  await dbClient.query(`UPDATE matches SET robot_b_id = NULL WHERE robot_b_id = $1 AND finished = FALSE AND tournament_id = $2`, [robotId, state.tournamentId]);
+  await loadStateFromDBAndBroadcast(); // Recarrega novamente após limpar referências nas matches
+
   res.json({ ok: true });
 });
 

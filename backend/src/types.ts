@@ -8,8 +8,17 @@ export interface Robot {
 
 export type Phase = "groups" | "elimination";
 
+export interface Tournament { // NOVO
+  id: string;
+  name: string;
+  status: "draft" | "active" | "finished";
+  advancePerGroup: number;
+  groupCount: number;
+}
+
 export interface Match {
   id: string;
+  tournamentId?: string; // NOVO: ID do torneio
   phase: Phase;           // "groups" ou "elimination"
   round: number;          // Nº da rodada dentro da phase (1,2,3...)
   group?: string | null;  // "A","B","C"... quando phase="groups"
@@ -63,4 +72,10 @@ export interface ArenaState {
   // rankings / tables
   ranking: RankingItem[];
   groupTables?: Record<string, GroupTableItem[]>;
+  
+  // NOVO: Controle de torneios
+  tournamentId: string | null; 
+  tournaments: Tournament[];
+  advancePerGroup: number;
+  groupCount: number;
 }
