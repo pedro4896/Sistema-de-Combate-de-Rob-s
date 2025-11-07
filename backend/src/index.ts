@@ -1238,6 +1238,8 @@ app.post("/robots", async (req, res) => {
     score: score || 0
   };
 
+  console.log("Inserting new robot:", newRobotData);
+
   // Insere na tabela 'robots'
   await dbClient.query(
     `INSERT INTO robots (id, name, team, image, score) VALUES ($1, $2, $3, $4, $5)`,
@@ -1248,23 +1250,21 @@ app.post("/robots", async (req, res) => {
   res.json(newRobotData);
 });
 
-// Atualizado para receber nome e chamar a nova generateTournament
 app.post("/matches/generate", (req, res) => {
-  let { name, groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
-  if (!name) return res.status(400).json({ error: "Nome do torneio é obrigatório." });
-  
+  let { groupCount = 2, robotsPerGroup = 4, advancePerGroup = 2 } = req.body || {};
   const total = state.robots.length;
   groupCount = Math.max(1, Math.min(groupCount, total));
   robotsPerGroup = Math.max(2, robotsPerGroup);
   advancePerGroup = Math.max(1, advancePerGroup);
-  generateTournament(name, groupCount, robotsPerGroup, advancePerGroup);
-  res.json({ ok: true, message: `Torneio "${name}" gerado e ativado.` });
+  generateTournament(groupCount, robotsPerGroup, advancePerGroup);
+  res.json({ ok: true });
 });
 
 // Rota para inserir partidas de eliminação - Atualizada para usar o ID do torneio ativo
-app.post("/matches/elimination", async (req, res) => {
+app.post("/matches/elimination", (req, res) => {
   const { matches } = req.body;
-  await insertMatches(matches);
+  state.matches.push(...matches);
+  broadcast("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 

@@ -7,13 +7,11 @@ import Screen from "./pages/Screen";
 import Ranking from "./pages/Ranking";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
-import Tournaments from "./pages/Tournaments"; // 👈 Importa o novo componente
-
 import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut, Home, List } from "lucide-react";
 
 export default function App() {
   const [tab, setTab] = useState<
-    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing" | "tournaments" // 👈 Atualizado para incluir 'tournaments'
+    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing"
   >("landing");
 
   const [isLogged, setIsLogged] = useState(!!localStorage.getItem("token"));
@@ -42,8 +40,8 @@ export default function App() {
   // Função de callback para ser usada no Login
   const handleLogin = () => {
     setIsLogged(true);
-    // Após o login, redireciona o usuário para a nova página de gerenciamento de torneios
-    setTab("tournaments"); 
+    // Após o login, redireciona o usuário para a nova página de gerenciamento de robos
+    setTab("robots"); 
   };
   
   // Função de callback para ser usada no Logout
@@ -87,7 +85,6 @@ export default function App() {
             {/* Páginas restritas (apenas admin logado) */}
             {isLogged && (
               <>
-                <Tab id="tournaments" icon={<List size={18} />} label="Torneios" /> {/* 👈 Nova aba */}
                 <Tab id="robots" icon={<Users size={18} />} label="Robôs" />
                 <Tab id="bracket" icon={<Sword size={18} />} label="Chaveamento" />
                 <Tab id="judge" icon={<Timer size={18} />} label="Luta" />
@@ -125,7 +122,6 @@ export default function App() {
         {tab === "login" && <Login onLogin={handleLogin} />} {/* Usa a função corrigida */}
 
         {/* Páginas restritas (apenas admin logado) */}
-        {isLogged && tab === "tournaments" && <Tournaments />} {/* 👈 Novo componente renderizado */}
         {isLogged && tab === "robots" && <Robots />}
         {isLogged && tab === "bracket" && <Bracket />}
         {isLogged && tab === "judge" && <Judge />}
@@ -133,7 +129,7 @@ export default function App() {
 
         {/* Tentativa de acessar restrita sem login */}
         {!isLogged &&
-          ["robots", "bracket", "judge", "scores", "tournaments"].includes(tab) && (
+          ["robots", "bracket", "judge", "scores"].includes(tab) && (
             <div className="text-center text-white/70 mt-20">
               <h2 className="text-2xl font-bold mb-2">🔒 Acesso restrito</h2>
               <p>Faça login como administrador para acessar esta seção.</p>

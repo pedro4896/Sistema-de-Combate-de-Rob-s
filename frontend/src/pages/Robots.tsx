@@ -23,12 +23,12 @@ export default function Robots() {
   function refresh(s:any){ setRobots(s.robots); }
   useEffect(()=>{ api("/state").then(r=>refresh(r.state)); return onMessage(m=>m.type==="UPDATE_STATE"&&refresh(m.payload.state)); },[]);
 
+  // CÓDIGO CORRETO: Passa um objeto puro. A função api() vai serializá-lo e adicionar o Content-Type.
   async function addRobot(){
     if(!name.trim())return;
-    await api("/robots",{method:"POST",body:JSON.stringify({name,team,image,score})});
+    await api("/robots",{method:"POST",body:{name,team,image,score}});
     setName(""); setTeam(""); setImage(""); setScore(0);
   }
-
   // Abre modal de edição
   const openEdit = (robot: Robot) => {
     setEditing(robot);
