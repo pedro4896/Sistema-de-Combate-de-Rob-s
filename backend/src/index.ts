@@ -1285,7 +1285,7 @@ app.post("/tournaments", async (req, res) => {
         await dbClient.query(
             `INSERT INTO tournaments (id, name, description, date, image, status, advance_per_group, group_count, participating_robot_ids) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [newTournamentId, name, description || null, date || null, image || null, 'draft', groupCount, advancePerGroup, '[]']
+            [newTournamentId, name, description || null, date || null, image || null, 'draft', advancePerGroup, groupCount, '[]']
         );
         await loadStateFromDBAndBroadcast();
         res.json({ ok: true, message: `Torneio "${name}" criado com sucesso (Draft).` });
