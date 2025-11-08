@@ -7,11 +7,13 @@ import Screen from "./pages/Screen";
 import Ranking from "./pages/Ranking";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
+// 1. NOVO IMPORT: Importa o componente Tournaments
+import Tournaments from "./pages/Tournaments";
 import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut, Home, List } from "lucide-react";
 
 export default function App() {
   const [tab, setTab] = useState<
-    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing"
+    "robots" | "bracket" | "judge" | "scores" | "screen" | "ranking" | "login" | "landing" | "tournaments" // 2. NOVO ESTADO: Adicionado "tournaments"
   >("landing");
 
   const [isLogged, setIsLogged] = useState(!!localStorage.getItem("token"));
@@ -85,6 +87,8 @@ export default function App() {
             {/* Páginas restritas (apenas admin logado) */}
             {isLogged && (
               <>
+                {/* 3. NOVO BOTÃO DE MENU: Torneios */}
+                <Tab id="tournaments" icon={<List size={18} />} label="Torneios" />
                 <Tab id="robots" icon={<Users size={18} />} label="Robôs" />
                 <Tab id="bracket" icon={<Sword size={18} />} label="Chaveamento" />
                 <Tab id="judge" icon={<Timer size={18} />} label="Luta" />
@@ -122,14 +126,16 @@ export default function App() {
         {tab === "login" && <Login onLogin={handleLogin} />} {/* Usa a função corrigida */}
 
         {/* Páginas restritas (apenas admin logado) */}
+        {isLogged && tab === "tournaments" && <Tournaments />} {/* 4. NOVO RENDER: Página de Torneios */}
         {isLogged && tab === "robots" && <Robots />}
         {isLogged && tab === "bracket" && <Bracket />}
         {isLogged && tab === "judge" && <Judge />}
         {isLogged && tab === "scores" && <Scores />}
 
         {/* Tentativa de acessar restrita sem login */}
+        {/* 5. ATUALIZADO: Inclui "tournaments" na lista de abas restritas */}
         {!isLogged &&
-          ["robots", "bracket", "judge", "scores"].includes(tab) && (
+          ["robots", "bracket", "judge", "scores", "tournaments"].includes(tab) && (
             <div className="text-center text-white/70 mt-20">
               <h2 className="text-2xl font-bold mb-2">🔒 Acesso restrito</h2>
               <p>Faça login como administrador para acessar esta seção.</p>

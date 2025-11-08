@@ -8,12 +8,17 @@ export interface Robot {
 
 export type Phase = "groups" | "elimination";
 
-export interface Tournament { // NOVO
+export interface Tournament { // ATUALIZADO
   id: string;
   name: string;
+  description?: string; // NOVO
+  date?: string; // NOVO
+  image?: string; // NOVO
   status: "draft" | "active" | "finished";
   advancePerGroup: number;
   groupCount: number;
+  participatingRobotIds?: string[]; // NOVO
+  participatingRobots?: Robot[]; // NOVO
 }
 
 export interface Match {

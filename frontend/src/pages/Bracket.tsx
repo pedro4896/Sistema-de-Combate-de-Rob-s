@@ -2,90 +2,140 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { Trophy, Swords, Settings, Play } from "lucide-react";
-import type { GroupTableItem, Match } from "../../../backend/src/types"; // Garante que todos os tipos são importados com 'type'
+import type { GroupTableItem } from "../../../backend/src/types";
+
+// Tipos auxiliares importados do backend/src/types.ts (Simplificados para leitura)
+type Match = { id: string; phase: 'groups' | 'elimination'; group: string | null; round: number; robotA: any; robotB: any; scoreA: number; scoreB: number; winner: any; finished: boolean; type: 'normal' | 'KO' | 'WO'; tournamentId: string; };
+type Robot = { id: string; name: string; team: string; };
+type Tournament = { 
+  id: string; 
+  name: string; 
+  status: 'draft' | 'active' | 'finished';
+  advancePerGroup: number; 
+  groupCount: number; 
+  participatingRobots?: Robot[]; 
+};
 
 export default function Chaveamento() {
   const [state, setState] = useState<any>(null);
 
-  // valores temporários (inputs)
-  const [groupCountInput, setGroupCountInput] = useState(2);
-  const [robotsPerGroupInput, setRobotsPerGroupInput] = useState(5);
-  const [advancePerGroupInput, setAdvancePerGroupInput] = useState(4);
+  // Estados para seleção de torneio
+  const [availableTournaments, setAvailableTournaments] = useState<Tournament[]>([]);
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string | null>(null);
+  const [displayedTournament, setDisplayedTournament] = useState<Tournament | null>(null);
 
-  // valores ativos aplicados
+  // valores ativos aplicados (Apenas mantidos para compatibilidade com a interface)
   const [groupCountActive, setGroupCountActive] = useState(2);
   const [advancePerGroupActive, setAdvancePerGroupActive] = useState(2);
-
   const [loading, setLoading] = useState(false);
 
+  // NOVO FLUXO DE BUSCA DE DADOS
+  const fetchTournamentData = async (tourId: string, globalState: any) => {
+    // Busca dados específicos do torneio via novo endpoint
+    const result = await api(`/tournaments/${tourId}/data`);
+    
+    if (result.ok) {
+        // Combina o estado global (para robots e lista de torneios) com os dados específicos
+        const matchesForTour = result.matches || [];
+        const groupTablesForTour = result.groupTables || {};
+        const tourDetails = result.tournament;
+
+        setState({
+            ...globalState,
+            matches: matchesForTour,
+            groupTables: groupTablesForTour,
+            tournamentId: globalState.tournamentId, // Mantém o ativo global
+            currentMatchId: result.currentMatchId, // Pega o currentMatchId correto
+            mainStatus: result.mainStatus,
+        });
+
+        setDisplayedTournament(tourDetails);
+        setGroupCountActive(tourDetails.groupCount);
+        setAdvancePerGroupActive(tourDetails.advancePerGroup);
+    } else {
+        // Se a busca de dados falhar (ex: torneio deletado), apenas atualiza a lista de torneios
+        setState(globalState);
+        setSelectedTournamentId(null);
+        setDisplayedTournament(null);
+        alert(result.error || "❌ Falha ao carregar dados do torneio.");
+    }
+  }
+
+  const fetchGlobalState = async (targetTournamentId?: string | null) => {
+    const r = await api("/state");
+    const newState = { ...r.state };
+    
+    const allTours: Tournament[] = newState.tournaments;
+    setAvailableTournaments(allTours);
+    
+    // Determina qual ID usar: target, ativo global, ou selecionado
+    let tourToLoadId = targetTournamentId || newState.tournamentId || selectedTournamentId;
+    
+    if (!tourToLoadId && allTours.length > 0) {
+        // Se nada estiver selecionado, carrega o primeiro
+        tourToLoadId = allTours[0].id;
+    }
+
+    if (tourToLoadId) {
+        // Se há um ID para carregar, usa a função específica
+        setSelectedTournamentId(tourToLoadId);
+        await fetchTournamentData(tourToLoadId, newState);
+    } else {
+        // Se não houver torneios
+        setState(newState);
+        setSelectedTournamentId(null);
+        setDisplayedTournament(null);
+    }
+  }
+
+  // Efeito para carregar o estado inicial e configurar o listener WebSocket
   useEffect(() => {
-    // Busca estado inicial
-    api("/state").then((r) => {
-      const newState = { ...r.state };
-      // O cálculo da tabela agora é responsabilidade exclusiva do backend.
-      setState(newState);
+    fetchGlobalState(null); // Chama na montagem
+    
+    // CORREÇÃO: O listener WebSocket passa 'null' para forçar a verificação do torneio ATIVO
+    // (o que garante que o recém-gerado seja carregado)
+    return onMessage((m: any) => m.type === "UPDATE_STATE" && fetchGlobalState(null)); 
+  }, []); // Sem dependência: executa apenas na montagem
 
-      setGroupCountActive(newState?.groupCount || 2);
-      setAdvancePerGroupActive(newState?.advancePerGroup || 2);
-    });
-
-    // Atualização em tempo real via WebSocket
-    return onMessage((m) => {
-      if (m.type === "UPDATE_STATE") {
-        const s = { ...m.payload.state };
-        // O cálculo da tabela agora é responsabilidade exclusiva do backend.
-        setState(s);
-
-        if (s.groupCount) setGroupCountActive(s.groupCount);
-        if (s.advancePerGroup) setAdvancePerGroupActive(s.advancePerGroup);
-      }
-    });
-  }, []);
-
-  // Funções de cálculo de tabela de grupo do frontend removidas - confiar no backend.
   
-  // Gera chaveamento
+  const handleTournamentSelectChange = (id: string) => {
+      // Quando o usuário seleciona um torneio, força a recarga do estado
+      setSelectedTournamentId(id);
+      fetchGlobalState(id);
+  }
+
+  
   const gerarChaveamento = async () => {
+    if (!displayedTournament) {
+      alert("❌ Selecione ou crie um torneio primeiro!");
+      return;
+    }
+
+    if (displayedTournament.status !== 'draft') {
+        alert("O chaveamento só pode ser gerado para torneios em status DRAFT. Finalize o torneio ATIVO na página de Torneios.");
+        return;
+    }
+
+    if ((displayedTournament.participatingRobots?.length || 0) < 2) {
+         alert("O torneio precisa de no mínimo 2 robôs participantes. Defina-os na página de Torneios.");
+         return;
+    }
+
     setLoading(true);
-    await api("/matches/generate", {
-      method: "POST",
-      body: JSON.stringify({
-        groupCount: groupCountInput,
-        robotsPerGroup: robotsPerGroupInput,
-        advancePerGroup: advancePerGroupInput,
-      }),
-    });
-    setGroupCountActive(groupCountInput);
-    setAdvancePerGroupActive(advancePerGroupInput);
+    // Chama a nova rota de ativação que também gera as partidas
+    const result = await api(`/tournaments/${displayedTournament.id}/activate`, { method: "POST" });
+    
+    if (result.ok) {
+        // O WebSocket se encarregará de chamar fetchGlobalState(null), o que carregará o novo torneio ATIVO
+        alert(result.message);
+    } else {
+        alert(result.error || "❌ Falha ao gerar chaveamento.");
+    }
+
     setLoading(false);
   };
-
-// 🧩 Gerar fase de eliminação (mata-mata)
-const gerarMataMata = async () => {
-  if (!state?.groupTables || !state?.matches) {
-    alert("❌ Nenhum dado de grupo encontrado.");
-    return;
-  }
-
-  // Verifica se todos os matches da fase de grupos já terminaram
-  const allGroupsFinished = state.matches
-    .filter((m: any) => m.phase === "groups")
-    .every((m: any) => m.finished);
-
-  if (!allGroupsFinished) {
-    alert("⏳ Ainda há partidas em andamento nos grupos!");
-    return;
-  }
-
-  // A lógica de geração do mata-mata é tratada pelo backend (generateEliminationFromGroups)
-  // após o último match da fase de grupos.
-
-  alert("O mata-mata é gerado automaticamente pelo servidor após a última partida de grupo. Caso não tenha gerado, verifique o console do backend.");
-  return; 
-};
-
-
-  // 🚀 Iniciar combate
+  
+  // 🚀 Iniciar combate - Lógica mantida
   const iniciarCombate = async (matchId: string) => {
     try {
       await api(`/matches/${matchId}/start`, { method: "POST" });
@@ -103,7 +153,17 @@ const gerarMataMata = async () => {
       </div>
     );
 
-  const matches = (state.matches || []).filter((m: any) => m.phase === "groups");
+  // Variáveis para simplificar o JSX
+  const currentTourStatus = displayedTournament?.status;
+  const canGenerateBracket = 
+      !loading && 
+      !!displayedTournament && 
+      currentTourStatus === 'draft' && 
+      (displayedTournament.participatingRobots?.length || 0) >= 2;
+  
+  // O filtro de matches e grupos agora usa o estado `state.matches` e `state.groupTables` 
+  // que já foram carregados e filtrados pelo `fetchTournamentData`
+  const matches = (state.matches || []).filter((m: any) => m.phase === "groups" && m.tournamentId === selectedTournamentId);
   const groups = Object.keys(state.groupTables || {});
   const colors = [
     "from-blue-900 to-blue-700",
@@ -117,67 +177,57 @@ const gerarMataMata = async () => {
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white p-8 select-none">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-10">
         <h1 className="text-3xl font-extrabold flex items-center gap-3">
-          <Trophy className="text-yellow-400" /> Configurar Chaveamento
+          <Trophy className="text-yellow-400" /> Chaveamento do Torneio
         </h1>
       </div>
 
-      {/* ---------- CONFIGURAÇÃO ---------- */}
-      <div className="bg-white/10 p-6 rounded-2xl shadow-xl mb-10 max-w-3xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-          <div>
-            <label className="block mb-2 text-sm text-white/70">
-              Quantidade de Grupos
-            </label>
-            <input
-              type="number"
-              min="1"
-              value={groupCountInput}
-              onChange={(e) => setGroupCountInput(Number(e.target.value))}
-              className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full"
-            />
-          </div>
-
-          <div>
-            <label className="block mb-2 text-sm text-white/70">
-              Robôs por Grupo
-            </label>
-            <input
-              type="number"
-              min="2"
-              value={robotsPerGroupInput}
-              onChange={(e) => setRobotsPerGroupInput(Number(e.target.value))}
-              className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full"
-            />
-          </div>
-
-          <div>
-            <label className="block mb-2 text-sm text-white/70">
-              Classificados por Grupo
-            </label>
-            <input
-              type="number"
-              min="1"
-              value={advancePerGroupInput}
-              onChange={(e) => setAdvancePerGroupInput(Number(e.target.value))}
-              className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full"
-            />
-          </div>
-
-          <button
-            onClick={gerarChaveamento}
-            disabled={loading}
-            className="bg-arena-accent text-black font-bold rounded-xl px-6 py-3 hover:opacity-90 transition-all duration-200 flex items-center gap-2"
-          >
-            <Settings size={18} />
-            {loading ? "Gerando..." : "Gerar"}
-          </button>
+      {/* ---------- SELETOR DE TORNEIO ---------- */}
+      <div className="bg-white/10 p-6 rounded-2xl shadow-xl mb-10 max-w-4xl mx-auto">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+            <div className="flex-grow">
+                <label className="block mb-2 text-sm text-white/70">
+                    Selecionar Torneio
+                </label>
+                <select
+                    value={selectedTournamentId || ""}
+                    onChange={(e) => handleTournamentSelectChange(e.target.value)}
+                    className="bg-black/40 border border-white/20 rounded-lg px-3 py-2 w-full text-white"
+                    disabled={availableTournaments.length === 0}
+                >
+                    <option value="" disabled>-- Selecione um Torneio --</option>
+                    {availableTournaments.map(t => (
+                        <option key={t.id} value={t.id}>
+                            {t.name} ({t.status.toUpperCase()})
+                        </option>
+                    ))}
+                </select>
+            </div>
+            
+            {/* BOTÃO CORRIGIDO: Usa a variável canGenerateBracket */}
+            <button
+              onClick={gerarChaveamento}
+              disabled={!canGenerateBracket}
+              className={`font-bold rounded-xl px-6 py-3 transition-all duration-200 flex items-center gap-2 ${
+                  canGenerateBracket ? 'bg-green-600 hover:bg-green-500' : 'bg-gray-500 cursor-not-allowed'
+              }`}
+            >
+              <Settings size={18} />
+              {loading ? "Gerando..." : "Gerar Chaveamento (Draft)"}
+            </button>
         </div>
+        {displayedTournament && currentTourStatus === 'draft' && (displayedTournament.participatingRobots?.length || 0) < 2 && (
+             <p className="text-sm text-red-400 mt-2">⚠️ Torneio em DRAFT: Adicione pelo menos 2 robôs na página **Torneios** para habilitar a geração.</p>
+        )}
       </div>
+
 
       {/* ---------- GRUPOS E TABELAS ---------- */}
       <h2 className="text-2xl font-bold mb-6 text-center">Fase de Grupos</h2>
-      {groups.length === 0 && (
-        <p className="text-white/60 text-center">Nenhum grupo gerado ainda.</p>
+      {groups.length === 0 && selectedTournamentId && (
+        <p className="text-white/60 text-center">O Torneio está em **DRAFT** ou o chaveamento ainda não foi gerado. Gere-o usando o botão acima ou na página de Torneios.</p>
+      )}
+      {groups.length === 0 && !selectedTournamentId && availableTournaments.length > 0 && (
+          <p className="text-white/60 text-center">Selecione um torneio para visualizar o chaveamento.</p>
       )}
 
       <div className="grid xl:grid-cols-2 lg:grid-cols-3 gap-10">
@@ -237,14 +287,14 @@ const gerarMataMata = async () => {
             </h4>
             <div className="space-y-2">
               {matches
-                .filter((m: any) => m.group === g && m.phase === "groups")
+                .filter((m: any) => m.group === g && m.phase === "groups" && m.tournamentId === selectedTournamentId)
                 .map((m: any) => (
                   <div
                     key={m.id}
                     className={`flex justify-between items-center bg-white/10 rounded-lg p-3 transition-all ${
                       m.finished === false && state.currentMatchId === m.id
                         ? "border-2 border-yellow-400 shadow-[0_0_15px_#FFD700] animate-pulse"
-                          : "border-l-4 border-transparent"
+                        : "border-l-4 border-transparent"
                     }`}
                   >
                     <span className="font-semibold">
@@ -316,7 +366,7 @@ const gerarMataMata = async () => {
             Grupo {label}
           </h3>
           {(state.matches || [])
-            .filter((m: any) => m.phase === "elimination" && m.group === label)
+            .filter((m: any) => m.phase === "elimination" && m.group === label && m.tournamentId === selectedTournamentId)
             .sort((a: any, b: any) => a.round - b.round)
             .map((m: any) => (
               <div
@@ -372,7 +422,7 @@ const gerarMataMata = async () => {
 
       {/* ---------- FASE FINAL ENTRE CAMPEÕES ---------- */}
       {(state.matches || []).some(
-        (m: any) => m.phase === "elimination" && !m.group
+        (m: any) => m.phase === "elimination" && !m.group && m.tournamentId === selectedTournamentId
       ) && (
         <div className="mt-16">
           <h2 className="text-2xl font-bold mb-4 text-center text-yellow-400">
@@ -380,7 +430,7 @@ const gerarMataMata = async () => {
           </h2>
 
           {(state.matches || [])
-            .filter((m: any) => m.phase === "elimination" && !m.group)
+            .filter((m: any) => m.phase === "elimination" && !m.group && m.tournamentId === selectedTournamentId)
             .sort((a: any, b: any) => a.round - b.round)
             .map((m: any) => (
               <div
