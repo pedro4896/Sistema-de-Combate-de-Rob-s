@@ -47,12 +47,14 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white flex flex-col items-center justify-start px-6 py-10">
       {/* LOGO E TÍTULO */}
-      <div className="flex flex-col items-center mb-2">
-        <h1 className="text-5xl font-extrabold mb-4 tracking-widest">
-          Spectro<span className="text-arena-accent">Clash</span>
-        </h1>
+      <div className="flex flex-col items-center mb-1">
+        <img
+          src="/roboClash.png"
+          alt="Logo RoboClash"
+          className="w-[300px] h-[300px] object-contain"
+        />
         <p className="text-lg text-white/80 max-w-lg mb-10">
-          Bem-vindo ao sistema de gerenciamento de torneios de robôs. O SpectroClash
+          Bem-vindo ao sistema de gerenciamento de torneios de robôs. O RoboClash
           oferece uma plataforma para controlar cronômetros, pontuação e até acompanhar as lutas em tempo real.
         </p>
       </div>

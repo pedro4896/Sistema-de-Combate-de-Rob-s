@@ -3,6 +3,7 @@ import { api } from "../api";
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
 import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play } from "lucide-react";
+import toast from "react-hot-toast";
 
 type Robot = { id: string; name: string; team: string; };
 type Tournament = { 
@@ -58,7 +59,7 @@ export default function Tournaments() {
   }, []);
 
   const handleCreateTournament = async () => {
-    if (!newTourName.trim()) return alert("O nome é obrigatório!");
+    if (!newTourName.trim()) return toast.error("O nome é obrigatório!", { duration: 3000 });
 
     setLoading(true);
     const result = await api("/tournaments", {
@@ -74,13 +75,13 @@ export default function Tournaments() {
     });
 
     if (result.ok) {
-      alert(result.message);
+      toast.success("Torneio Criado com Sucesso", { duration: 3000 });
       setNewTourName("");
       setNewTourDesc("");
       setNewTourDate("");
       setNewTourImage("");
     } else {
-      alert(result.error || "❌ Falha ao criar o torneio.");
+      toast.error("Falha ao criar o torneio.", { duration: 3000 });
     }
     setLoading(false);
   };
@@ -101,10 +102,10 @@ export default function Tournaments() {
       });
 
       if (result.ok) {
-        alert(`✅ Torneio "${editing.name}" atualizado!`);
+        toast.success(`Torneio "${editing.name}" atualizado!`, { duration: 3000 });
         setEditing(null);
       } else {
-        alert(result.error || "❌ Falha ao atualizar o torneio.");
+        toast.error("Falha ao atualizar o torneio.", { duration: 3000 });
       }
   };
 
@@ -114,16 +115,16 @@ export default function Tournaments() {
     const result = await api(`/tournaments/${id}`, { method: "DELETE" });
 
     if (result.ok) {
-        alert(result.message);
+        toast.success(result.message, { duration: 3000 });
     } else {
-        alert(result.error || "❌ Falha ao deletar o torneio.");
+        toast.error(result.error || "Falha ao deletar o torneio.", { duration: 3000 });
     }
   };
   
   const handleActivateTournament = async (id: string, name: string) => {
     const currentTour = state.tournaments.find(t => t.id === id);
     if (!currentTour || (currentTour.participatingRobots?.length || 0) < 2) {
-         alert("O torneio precisa de no mínimo 2 robôs para gerar o chaveamento. Use o botão Gerenciar Robôs.");
+        toast.error("O torneio precisa de no mínimo 2 robôs para gerar o chaveamento. Use o botão Gerenciar Robôs.", { duration: 3000 });
          return;
     }
 
@@ -133,9 +134,9 @@ export default function Tournaments() {
     const result = await api(`/tournaments/${id}/activate`, { method: "POST" });
     
     if (result.ok) {
-        alert(result.message);
+        toast.success(result.message, { duration: 3000 });
     } else {
-        alert(result.error || "❌ Falha ao ativar/gerar o chaveamento.");
+        toast.error(result.error || "Falha ao ativar/gerar o chaveamento.", { duration: 3000 });
     }
   };
 
@@ -145,16 +146,16 @@ export default function Tournaments() {
     const result = await api(`/tournaments/${id}/finalize`, { method: "POST" });
     
     if (result.ok) {
-        alert(result.message);
+        toast.success(result.message, { duration: 3000 });
     } else {
-        alert(result.error || "❌ Falha ao finalizar o torneio.");
+        toast.error(result.error || "❌ Falha ao finalizar o torneio.", { duration: 3000 });
     }
   };
 
   // --- Lógica de Gerenciamento de Robôs ---
   const openRobotManager = (tournament: Tournament) => {
     if (tournament.status !== 'draft') {
-        alert("Apenas torneios em status 'draft' podem ter os robôs gerenciados.");
+        toast.error("Apenas torneios em status 'draft' podem ter os robôs gerenciados.", { duration: 3000 });
         return;
     }
     setManagingRobots(tournament);
@@ -181,7 +182,7 @@ export default function Tournaments() {
     if (!managingRobots) return;
     
     if (managingRobots.status !== 'draft') {
-        alert("Erro: O torneio não está mais em status 'draft'.");
+        toast.error("Erro: O torneio não está mais em status 'draft'.", { duration: 3000 });
         return;
     }
 
@@ -191,18 +192,18 @@ export default function Tournaments() {
     });
 
     if (result.ok) {
-        alert(result.message);
+        toast.success(result.message, { duration: 3000 });
         setManagingRobots(null);
         setSelectedRobots([]);
     } else {
-        alert(result.error || "❌ Falha ao salvar a lista de robôs.");
+        toast.error(result.error || "❌ Falha ao salvar a lista de robôs.", { duration: 3000 });
     }
   };
 
 
   return (
     <div className="p-8">
-      <h1 className="text-3xl font-extrabold flex items-center gap-3 text-yellow-400 mb-6">
+      <h1 className="text-3xl font-extrabold flex items-center gap-3 text-arena-accent mb-6">
         <Swords /> Gerenciamento de Torneios
       </h1>
       <hr className="mb-8 border-white/20" />
@@ -322,6 +323,10 @@ export default function Tournaments() {
                   {tour.status === 'draft' && <span className="text-sm font-normal bg-yellow-500 text-black px-2 py-0.5 rounded">DRAFT</span>}
               </div>
               <p className="text-sm text-white/70 mt-1">{tour.description || "Sem descrição."}</p>
+              {/* NOVO: ADICIONA A DATA */}
+              <p className="text-xs text-white/60 mt-1">
+                  Data: {tour.date || "N/A"}
+              </p>
               <p className="text-xs text-white/50 mt-1">
                   Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup}
               </p>

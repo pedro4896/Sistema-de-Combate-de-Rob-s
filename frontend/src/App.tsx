@@ -7,6 +7,8 @@ import Screen from "./pages/Screen";
 import Ranking from "./pages/Ranking";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
+import { Toaster } from "react-hot-toast";
+
 // 1. NOVO IMPORT: Importa o componente Tournaments
 import Tournaments from "./pages/Tournaments";
 import { Trophy, Sword, MonitorPlay, Users, Timer, LogIn, LogOut, Home, List } from "lucide-react";
@@ -56,25 +58,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
+      <Toaster position="bottom-right" reverseOrder={false} />
       {/* ======= HEADER ======= */}
       <header className="sticky top-0 z-30 backdrop-blur bg-black/30 border-b border-white/10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-2">
           {/* LOGO E NOME ALINHADOS NA HORIZONTAL */}
           <div className="flex items-center gap-2">
             {/* CORRIGIDO: Agora usa setTab para navegação interna, evitando recarga de página */}
-            <a onClick={() => setTab("landing")} className="cursor-pointer">
+            <a onClick={() => setTab("landing")} className="cursor-pointer w-32 h-32 flex items-center justify-center">
               <img
-                src="/logoSpectron.svg"
-                alt="Logo Spectron"
-                className="w-20 h-20 object-contain"
+                src="/roboClash.png"
+                alt="Logo RoboClash"
+                className="w-full h-full object-contain"
               />
             </a>
-          <h1 
-            onClick={() => setTab("landing")}
-            className="text-2xl font-extrabold tracking-widest cursor-pointer"
-          >
-            Spectro<span className="text-arena-accent">Clash</span>
-          </h1>
           </div>
 
           {/* NAVEGAÇÃO */}

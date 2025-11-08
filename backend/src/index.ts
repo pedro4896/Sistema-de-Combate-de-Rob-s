@@ -3,11 +3,12 @@ import cors from "cors";
 import { createServer } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
+// Usamos 'import type' para tipos definidos localmente (para evitar ReferenceError no runtime)
 import type { ArenaState, Robot, Match, GroupTableItem, Tournament } from "./types";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { Client } from "pg";
-import type { QueryResult } from "pg";
+import type { QueryResult } from "pg"; // Importa QueryResult explicitamente como tipo
 
 const SECRET_KEY = process.env.ARENA_SECRET || "arena_secret_2025";
 const PORT = Number(process.env.PORT || 8080);
@@ -385,6 +386,17 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+/**
+ * Função auxiliar para atualizar o score acumulado do robô no DB
+ */
+async function updateRobotScoreInDB(robotId: string, scoreAtual: number) {
+  const robot = state.robots.find((r) => r.id === robotId);
+  if (robot) {
+    const newScore = (robot.score || 0) + scoreAtual;
+    await dbClient?.query(`UPDATE robots SET score = $1 WHERE id = $2`, [newScore, robotId]);
+  }
+}
+
 /* ------------------ TIMERS ------------------ */
 let mainTick: NodeJS.Timeout | null = null;
 let recoveryTick: NodeJS.Timeout | null = null;
@@ -429,7 +441,7 @@ function startMainTimer(seconds = 180) {
 function startRecoveryTimer(seconds = 10, resume = false) {
   if (!resume && state.mainStatus === "running") {
     state.mainStatus = "paused";
-    if (mainTick) clearInterval(clearInterval);
+    if (mainTick) clearInterval(mainTick);
   }
 
   if (recoveryTick) clearInterval(recoveryTick);
@@ -472,6 +484,19 @@ function authenticateToken(req: express.Request, res: express.Response, next: ex
   } catch {
     res.status(403).json({ error: "Token inválido" });
   }
+}
+
+// CORREÇÃO: Função startMatch re-inserida
+function startMatch(id: string) {
+  const match = state.matches.find((m) => m.id === id);
+  if (!match) return;
+
+  state.currentMatchId = id;
+  resetTimers();
+  state.mainStatus = "idle";
+  state.winner = null;
+
+  broadcastAndSave("UPDATE_STATE", { state });
 }
 
 /* ------------------ LÓGICA DE CHAVEAMENTO ------------------ */
@@ -559,11 +584,7 @@ function computeGroupTables(robots: Robot[] = state.robots, matches: Match[] = s
     // Filtra apenas matches de grupo
     const groupMatches = matches.filter((m) => m.phase === "groups");
 
-    const groups = Array.from(
-        new Set(groupMatches.map((m) => m.group).filter(Boolean))
-    );
-
-    // Inicializa a tabela para cada robô participante nos grupos
+    // 1. Inicializa a tabela para cada robô participante nos grupos
     for (const m of groupMatches) {
         const g = m.group!;
         if (!tables[g]) tables[g] = {};
@@ -576,7 +597,7 @@ function computeGroupTables(robots: Robot[] = state.robots, matches: Match[] = s
     }
 
 
-    // Processa os resultados
+    // 2. Processa os resultados
     for (const m of groupMatches) {
         const g = m.group!;
         const A = m.robotA?.id;
@@ -923,7 +944,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
     const isGroupPhase = currentMatchInState.phase === "groups";
 
     if (isGroupPhase) {
-      const allGroupsDone = state.matches.filter(x => x.phase === "groups" && x.tournamentId === currentMatchInState.tournamentId).every(x => x.finished);
+      const allGroupsDone = state.matches.filter(x => x.phase === "groups").every(x => x.finished);
       if (allGroupsDone) generateEliminationFromGroups();
     } else {
       const round = currentMatchInState.round;
@@ -981,7 +1002,7 @@ async function insertMatches(matches: Match[]) {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         m.id,
-        state.tournamentId, // Usa o ID do torneio ativo
+        m.tournamentId, // Usa o ID do torneio passado
         m.phase,
         m.round,
         m.group,
@@ -1054,6 +1075,7 @@ async function activateTournament(tournamentId: string) {
         if (groups.length === 1) groups = [groups[0]];
 
         const groupMatches = generateGroupMatches(groups);
+        // Note: insertMatches usa o state.tournamentId que acabamos de definir, passando o ID correto para o DB
         await insertMatches(groupMatches);
     }
     
@@ -1720,12 +1742,14 @@ wss.on("connection", (ws) => {
           }
           break;
 
+
         case "RESET_MAIN":
           if (mainTick) clearInterval(mainTick);
           state.mainTimer = 180;
           state.mainStatus = "idle";
           broadcastAndSave("UPDATE_STATE", { state });
           break;
+
 
         case "START_RECOVERY":
           startRecoveryTimer(payload?.seconds ?? 10);
