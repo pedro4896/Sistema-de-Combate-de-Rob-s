@@ -35,6 +35,7 @@ export async function api(endpoint: string, options: ApiOptions = {}) {
       body: body as BodyInit,
     });
 
+    // Tenta ler a resposta JSON. Se falhar, assume um objeto vazio.
     const data = await response.json().catch(() => ({}));
 
     // 401 ou 403 (Token inválido, expirado ou ausente)
@@ -47,7 +48,7 @@ export async function api(endpoint: string, options: ApiOptions = {}) {
         return { ok: false, error: "Token inválido/expirado." };
     }
     
-    // Se a API retornar um erro (e não for 401/403), repassa a mensagem
+    // Se a API retornar um status de erro (como 409), retorna o objeto de erro
     if (!response.ok) {
         return { ok: false, error: data.error || `Erro na API: ${response.status}` };
     }

@@ -3,10 +3,12 @@ import cors from "cors";
 import { createServer } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
-import { ArenaState, Robot, Match, GroupTableItem, Tournament } from "./types"; // Adicionado Tournament
+// Usamos 'import type' para tipos definidos localmente
+import type { ArenaState, Robot, Match, GroupTableItem, Tournament } from "./types"; 
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { Client, QueryResult } from "pg";
+import { Client } from "pg";
+import type { QueryResult } from "pg"; // Importa QueryResult explicitamente como tipo
 
 const SECRET_KEY = process.env.ARENA_SECRET || "arena_secret_2025";
 const PORT = Number(process.env.PORT || 8080);
@@ -1225,15 +1227,48 @@ app.post("/tournaments/:id/finish", async (req, res) => {
 
 
 // Rotas CRUD de Robôs e Partidas
-
 app.post("/robots", async (req, res) => {
   const { name, team, image, score } = req.body;
   if (!dbClient || !name) return res.status(400).json({ error: "Nome do robô é obrigatório." });
 
+  // Normaliza o campo team: trata undefined ou string vazia como null para a pesquisa
+  const robotTeam = team || null;
+  
+  // 1. VERIFICAÇÃO DA RESTRIÇÃO: Nome Único por Equipe
+  let checkQuery, checkValues;
+  
+  if (robotTeam) {
+      // Caso 1: Equipe fornecida. Verifica se já existe robô com o mesmo nome E mesma equipe.
+      checkQuery = `SELECT id FROM robots WHERE name = $1 AND team = $2`;
+      checkValues = [name, robotTeam];
+  } else {
+      // Caso 2: Equipe NÃO fornecida. Verifica se já existe robô com o mesmo nome E equipe NULL/vazia.
+      checkQuery = `SELECT id FROM robots WHERE name = $1 AND (team IS NULL OR team = '')`;
+      checkValues = [name];
+  }
+
+  try {
+        const existingRobot = await dbClient.query(checkQuery, checkValues);
+        
+        if (existingRobot.rows.length > 0) {
+            const errorMessage = robotTeam
+              ? `❌ Já existe um robô com o nome "${name}" na equipe "${robotTeam}".`
+              : `❌ Já existe um robô sem equipe com o nome "${name}".`;
+              console.log(errorMessage);
+
+            // ✅ O backend está enviando o status 409 e a mensagem de erro.
+            return res.status(409).json({ error: errorMessage }); 
+        }
+    } catch (error) {
+        console.error("❌ Erro ao verificar robô no DB:", error);
+        return res.status(500).json({ error: "Erro interno ao verificar o robô." });
+    }
+
+  // 2. CRIAÇÃO DO NOVO ROBÔ (Se a verificação passar)
   const newRobotData: Robot = {
     id: uuidv4(),
     name,
-    team: team || null,
+    team: robotTeam,
     image: image || null,
     score: score || 0
   };
@@ -1241,11 +1276,17 @@ app.post("/robots", async (req, res) => {
   console.log("Inserting new robot:", newRobotData);
 
   // Insere na tabela 'robots'
-  await dbClient.query(
-    `INSERT INTO robots (id, name, team, image, score) VALUES ($1, $2, $3, $4, $5)`,
-    [newRobotData.id, newRobotData.name, newRobotData.team, newRobotData.image, newRobotData.score]
-  );
+  try {
+      await dbClient.query(
+          `INSERT INTO robots (id, name, team, image, score) VALUES ($1, $2, $3, $4, $5)`,
+          [newRobotData.id, newRobotData.name, newRobotData.team, newRobotData.image, newRobotData.score]
+      );
+  } catch (error) {
+      console.error("❌ Erro ao inserir robô no DB:", error);
+      return res.status(500).json({ error: "Erro interno ao cadastrar o robô." });
+  }
   
+  // 3. ATUALIZA ESTADO E RETORNA
   await loadStateFromDBAndBroadcast(); 
   res.json(newRobotData);
 });
@@ -1256,7 +1297,7 @@ app.post("/matches/generate", (req, res) => {
   groupCount = Math.max(1, Math.min(groupCount, total));
   robotsPerGroup = Math.max(2, robotsPerGroup);
   advancePerGroup = Math.max(1, advancePerGroup);
-  generateTournament(groupCount, robotsPerGroup, advancePerGroup);
+  generateTournament("Torneio Gerado", groupCount, robotsPerGroup, advancePerGroup);
   res.json({ ok: true });
 });
 
@@ -1392,42 +1433,79 @@ app.delete("/robots/:id", async (req, res) => {
 });
 
 app.put("/robots/:id", async (req, res) => {
-  if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
+    if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
 
-  const robotId = req.params.id;
-  const { name, team, image } = req.body;
-  
-  const currentRobot = state.robots.find(r => r.id === robotId);
-  if (!currentRobot) return res.status(404).json({ error: "Robot not found" });
+    const robotId = req.params.id;
+    const { name, team, image } = req.body;
 
-  // Cria uma lista de campos a serem atualizados
-  const updates = [];
-  const values = [];
-  let paramIndex = 1;
+    // Busca o robô atual no estado (necessário para fallback e validação)
+    const currentRobot = state.robots.find(r => r.id === robotId);
+    if (!currentRobot) return res.status(404).json({ error: "Robot not found" });
 
-  if (name !== undefined) {
-    updates.push(`name = $${paramIndex++}`);
-    values.push(name);
-  }
-  if (team !== undefined) {
-    updates.push(`team = $${paramIndex++}`);
-    values.push(team || null);
-  }
-  if (image !== undefined) {
-    updates.push(`image = $${paramIndex++}`);
-    values.push(image || null);
-  }
+    // Determina o nome e a equipe a serem verificados/salvos
+    const newName = name !== undefined ? name : currentRobot.name;
+    // Normaliza team: string vazia ou undefined (se não estiver no body) deve ser tratada.
+    const newTeam = team !== undefined ? (team || null) : currentRobot.team;
 
-  if (updates.length > 0) {
-    values.push(robotId); 
-    const sql = `UPDATE robots SET ${updates.join(', ')} WHERE id = $${paramIndex}`;
-    await dbClient.query(sql, values);
-  }
+    // 1. VERIFICAÇÃO DA RESTRIÇÃO (Duplicação), EXCLUINDO o robô atual
+    let checkQuery, checkValues;
+    
+    if (newTeam) {
+        // Caso 1: Equipe fornecida. Verifica se JÁ EXISTE OUTRO robô com o mesmo nome E mesma equipe.
+        checkQuery = `SELECT id FROM robots WHERE name = $1 AND team = $2 AND id != $3`;
+        checkValues = [newName, newTeam, robotId];
+    } else {
+        // Caso 2: Equipe NÃO fornecida (ou nula). Verifica se JÁ EXISTE OUTRO robô com o mesmo nome E equipe NULL/vazia.
+        checkQuery = `SELECT id FROM robots WHERE name = $1 AND (team IS NULL OR team = '') AND id != $2`;
+        checkValues = [newName, robotId];
+    }
 
-  await loadStateFromDBAndBroadcast();
-  res.json({ ok: true, robot: state.robots.find(r => r.id === robotId) });
+    try {
+        const existingRobot = await dbClient.query(checkQuery, checkValues);
+        
+        if (existingRobot.rows.length > 0) {
+            const errorMessage = newTeam
+                ? `❌ Já existe um robô com o nome "${newName}" na equipe "${newTeam}".`
+                : `❌ Já existe um robô sem equipe com o nome "${newName}".`;
+
+            // Retorna 409 Conflict com a mensagem de erro
+            return res.status(409).json({ error: errorMessage });
+        }
+    } catch (error) {
+        console.error("❌ Erro ao verificar robô no DB durante PUT:", error);
+        return res.status(500).json({ error: "Erro interno ao verificar o robô." });
+    }
+    
+    // 2. CRIAÇÃO DA QUERY DE ATUALIZAÇÃO (Se a verificação passar)
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (name !== undefined) {
+      updates.push(`name = $${paramIndex++}`);
+      values.push(newName);
+    }
+    if (team !== undefined) {
+      updates.push(`team = $${paramIndex++}`);
+      values.push(newTeam);
+    }
+    if (image !== undefined) {
+      updates.push(`image = $${paramIndex++}`);
+      values.push(image || null);
+    }
+    
+    // Ignorando score do body, pois o frontend não envia, mas se enviasse, deveria ser tratado.
+    
+    if (updates.length > 0) {
+      values.push(robotId); 
+      const sql = `UPDATE robots SET ${updates.join(', ')} WHERE id = $${paramIndex}`;
+      await dbClient.query(sql, values);
+    }
+
+    // 3. ATUALIZA ESTADO E RETORNA
+    await loadStateFromDBAndBroadcast();
+    res.json({ ok: true, robot: state.robots.find(r => r.id === robotId) });
 });
-
 
 /* ------------------ WEBSOCKET (Inalterado, usa broadcastAndSave) ------------------ */
 

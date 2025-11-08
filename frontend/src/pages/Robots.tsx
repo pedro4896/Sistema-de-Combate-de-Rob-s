@@ -3,7 +3,6 @@ import { api } from "../api";
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
 import { Trash2, Plus } from "lucide-react";
-import { s } from "framer-motion/client";
 import { Bot } from "lucide-react";
 import { Edit3 } from "lucide-react";
 
@@ -23,12 +22,37 @@ export default function Robots() {
   function refresh(s:any){ setRobots(s.robots); }
   useEffect(()=>{ api("/state").then(r=>refresh(r.state)); return onMessage(m=>m.type==="UPDATE_STATE"&&refresh(m.payload.state)); },[]);
 
-  // CÓDIGO CORRETO: Passa um objeto puro. A função api() vai serializá-lo e adicionar o Content-Type.
+  // CORRIGIDO: Agora verifica o retorno da API para saber se foi bem-sucedido.
   async function addRobot(){
-    if(!name.trim())return;
-    await api("/robots",{method:"POST",body:{name,team,image,score}});
-    setName(""); setTeam(""); setImage(""); setScore(0);
+    if(!name.trim()){
+      alert("O nome do robô é obrigatório.");
+      return;
+    }
+    
+    // Normaliza team e image para enviar null (compatível com o backend)
+    const robotData = {
+      name,
+      team: team.trim() || null, 
+      image: image.trim() || null,
+      score
+    };
+
+    // A função api retorna um objeto { ok, error, ... }
+    const result = await api("/robots", {
+        method:"POST",
+        body: robotData // api.ts fará JSON.stringify
+    });
+    
+    if (result.ok) {
+        // Sucesso
+        alert(`✅ Robô "${name}" cadastrado com sucesso!`); 
+        setName(""); setTeam(""); setImage(""); setScore(0);
+    } else {
+        // Erro: exibe o erro do backend (incluindo a mensagem de restrição 409)
+        alert(result.error || "❌ Falha ao cadastrar o robô. Erro desconhecido.");
+    }
   }
+
   // Abre modal de edição
   const openEdit = (robot: Robot) => {
     setEditing(robot);
@@ -37,21 +61,41 @@ export default function Robots() {
     setEditImage(robot.image || "");
   };
 
+  // CORRIGIDO: Verifica o retorno da API para saber se foi bem-sucedido.
   const saveEdit = async () => {
     if (!editing) return;
-    await api(`/robots/${editing.id}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        name: editName,
-        team: editTeam,
-        image: editImage,
-      }),
-      headers: { "Content-Type": "application/json" },
+    
+    // Normaliza team e image para enviar null (compatível com o backend)
+    const updatedData = {
+      name: editName,
+      team: editTeam.trim() || null, 
+      image: editImage.trim() || null,
+    };
+
+    const result = await api(`/robots/${editing.id}`, {
+        method: "PUT",
+        // api.ts fará JSON.stringify
+        body: updatedData, 
     });
-    setEditing(null);
+
+    if (result.ok) {
+        alert(`✅ Robô "${editName}" atualizado com sucesso!`);
+        setEditing(null);
+    } else {
+        // Erro: exibe o erro do backend
+        alert(result.error || "❌ Falha ao atualizar o robô. Erro desconhecido.");
+    }
   };
 
-  async function delRobot(id:string){ await api(`/robots/${id}`,{method:"DELETE"}); }
+  async function delRobot(id:string){ 
+      const result = await api(`/robots/${id}`,{method:"DELETE"}); 
+      
+      if (result.ok) {
+          alert("🗑️ Robô removido com sucesso!");
+      } else {
+          alert(result.error || "❌ Falha ao remover o robô.");
+      }
+  }
 
   const renderRobotImage = (robot: Robot, color: string) => {
     // Verifica se o robô tem imagem e exibe
@@ -95,7 +139,7 @@ export default function Robots() {
             <div className="mt-3 flex items-center justify-start gap-4">
               <div>
                 <div className="heading">{r.name}</div>
-                <div className="sub">Equipe: {r.team}</div>
+                <div className="sub">Equipe: {r.team || "N/A"}</div>
               </div>
               <button className="ml-auto btn btn-danger" onClick={()=>delRobot(r.id)}><Trash2 size={16}/></button>
               <button

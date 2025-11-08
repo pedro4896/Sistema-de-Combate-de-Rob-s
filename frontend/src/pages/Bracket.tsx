@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { Trophy, Swords, Settings, Play } from "lucide-react";
-import type { GroupTableItem } from "../../../backend/src/types";
+import type { GroupTableItem, Match } from "../../../backend/src/types"; // Garante que todos os tipos são importados com 'type'
 
 export default function Chaveamento() {
   const [state, setState] = useState<any>(null);
@@ -22,7 +22,7 @@ export default function Chaveamento() {
     // Busca estado inicial
     api("/state").then((r) => {
       const newState = { ...r.state };
-      newState.groupTables = calculateGroupTables(newState.matches, newState.groupTables);
+      // O cálculo da tabela agora é responsabilidade exclusiva do backend.
       setState(newState);
 
       setGroupCountActive(newState?.groupCount || 2);
@@ -33,7 +33,7 @@ export default function Chaveamento() {
     return onMessage((m) => {
       if (m.type === "UPDATE_STATE") {
         const s = { ...m.payload.state };
-        s.groupTables = calculateGroupTables(s.matches, s.groupTables);
+        // O cálculo da tabela agora é responsabilidade exclusiva do backend.
         setState(s);
 
         if (s.groupCount) setGroupCountActive(s.groupCount);
@@ -42,81 +42,8 @@ export default function Chaveamento() {
     });
   }, []);
 
-  // Calcula tabela dos grupos
-function calculateGroupTables(matches: Match[], groupTables: Record<string, GroupTableItem[]>) {
-  const newGroupTables: Record<string, GroupTableItem[]> = {};
-
-  for (const g in groupTables) {
-    // Inicializa cada robô da tabela com estatísticas zeradas
-    const table: GroupTableItem[] = groupTables[g].map(r => ({
-      ...r,
-      pts: 0,
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      ko: 0,
-      wo: 0
-    }));
-
-    // Processa apenas os matches finalizados do grupo
-    matches
-      .filter(m => m.group === g && m.finished)
-      .forEach(m => {
-        const robotA = table.find(r => r.robotId === m.robotA?.id);
-        const robotB = table.find(r => r.robotId === m.robotB?.id);
-        if (!robotA || !robotB) return;
-
-        // Pontuação dos juízes
-        robotA.pts += m.scoreA;
-        robotB.pts += m.scoreB;
-
-        // Resultado
-        if (m.type === "KO") {
-          // K.O: adiciona 1 ao KO do vencedor
-          if (m.winner?.id === robotA.robotId) {
-            robotA.wins += 1;
-            robotA.ko += 1;
-            robotB.losses += 1;
-          } else {
-            robotB.wins += 1;
-            robotB.ko += 1;
-            robotA.losses += 1;
-          }
-        } else if (m.type === "WO") {
-          // W.O: adiciona 1 ao WO do vencedor
-          if (m.winner?.id === robotA.robotId) {
-            robotA.wins += 1;
-            robotA.wo += 1;
-            robotB.losses += 1;
-          } else {
-            robotB.wins += 1;
-            robotB.wo += 1;
-            robotA.losses += 1;
-          }
-        } else {
-          // Normal
-          if (m.winner) {
-            if (m.winner.id === robotA.robotId) {
-              robotA.wins += 1;
-              robotB.losses += 1;
-            } else {
-              robotB.wins += 1;
-              robotA.losses += 1;
-            }
-          } else {
-            // Empate
-            robotA.draws += 1;
-            robotB.draws += 1;
-          }
-        }
-      });
-
-    // Ordena pelo total de pontos
-    newGroupTables[g] = table.sort((a, b) => b.pts - a.pts);
-  }
-
-  return newGroupTables;
-}
+  // Funções de cálculo de tabela de grupo do frontend removidas - confiar no backend.
+  
   // Gera chaveamento
   const gerarChaveamento = async () => {
     setLoading(true);
@@ -150,62 +77,11 @@ const gerarMataMata = async () => {
     return;
   }
 
-  // Pega os classificados de cada grupo
-  const classificados: any[] = [];
-  for (const g in state.groupTables) {
-    const sorted = [...state.groupTables[g]].sort((a, b) => b.pts - a.pts);
-    const top = sorted.slice(0, advancePerGroupActive);
-    top.forEach((r) => classificados.push(r));
-  }
+  // A lógica de geração do mata-mata é tratada pelo backend (generateEliminationFromGroups)
+  // após o último match da fase de grupos.
 
-  if (classificados.length < 2) {
-    alert("⚠️ Robôs insuficientes para gerar o mata-mata.");
-    return;
-  }
-
-  // Embaralha para confrontos aleatórios
-  const embaralhados = [...classificados].sort(() => Math.random() - 0.5);
-
-  // Cria as partidas do mata-mata
-  const eliminatorias = [];
-  for (let i = 0; i < embaralhados.length; i += 2) {
-    if (embaralhados[i + 1]) {
-      eliminatorias.push({
-        id: crypto.randomUUID(),
-        phase: "elimination",
-        round: 1,
-        robotA: embaralhados[i],
-        robotB: embaralhados[i + 1],
-        scoreA: 0,
-        scoreB: 0,
-        winner: null,
-        finished: false,
-        type: "normal",
-      });
-    } else {
-      // Robô sem oponente avança por WO
-      eliminatorias.push({
-        id: crypto.randomUUID(),
-        phase: "elimination",
-        round: 1,
-        robotA: embaralhados[i],
-        robotB: { id: "bye", name: "BYE", team: "", image: "" },
-        scoreA: 33,
-        scoreB: 0,
-        winner: embaralhados[i],
-        finished: true,
-        type: "WO",
-      });
-    }
-  }
-
-  // Atualiza o backend
-  await api("/matches/elimination", {
-    method: "POST",
-    body: JSON.stringify({ matches: eliminatorias }),
-  });
-
-  alert("🏆 Fase de mata-mata gerada com sucesso!");
+  alert("O mata-mata é gerado automaticamente pelo servidor após a última partida de grupo. Caso não tenha gerado, verifique o console do backend.");
+  return; 
 };
 
 
@@ -361,14 +237,14 @@ const gerarMataMata = async () => {
             </h4>
             <div className="space-y-2">
               {matches
-                .filter((m: any) => m.group === g && ["groups", "elimination"].includes(m.phase))
+                .filter((m: any) => m.group === g && m.phase === "groups")
                 .map((m: any) => (
                   <div
                     key={m.id}
                     className={`flex justify-between items-center bg-white/10 rounded-lg p-3 transition-all ${
                       m.finished === false && state.currentMatchId === m.id
                         ? "border-2 border-yellow-400 shadow-[0_0_15px_#FFD700] animate-pulse"
-                        : "border-l-4 border-transparent"
+                          : "border-l-4 border-transparent"
                     }`}
                   >
                     <span className="font-semibold">
@@ -385,7 +261,7 @@ const gerarMataMata = async () => {
                       </div>
                     )}
 
-                    {/* Mostrar vencedor se a partida terminou */}
+                    {/* Mostrar tipo de vitória se a partida terminou */}
                     {m.finished && (
                       <div className="flex text-sm text-yellow-400 items-center gap-1">
                         {m.type === "KO" && " K.O"}
