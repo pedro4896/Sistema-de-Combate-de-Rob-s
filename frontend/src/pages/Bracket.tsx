@@ -3,6 +3,7 @@ import { api } from "../api";
 import { onMessage } from "../ws";
 import { Trophy, Swords, Settings, Play } from "lucide-react";
 import type { GroupTableItem } from "../../../backend/src/types";
+import toast from "react-hot-toast";
 
 // Tipos auxiliares importados do backend/src/types.ts (Simplificados para leitura)
 type Match = { id: string; phase: 'groups' | 'elimination'; group: string | null; round: number; robotA: any; robotB: any; scoreA: number; scoreB: number; winner: any; finished: boolean; type: 'normal' | 'KO' | 'WO'; tournamentId: string; };
@@ -57,7 +58,7 @@ export default function Chaveamento() {
         setState(globalState);
         setSelectedTournamentId(null);
         setDisplayedTournament(null);
-        alert(result.error || "❌ Falha ao carregar dados do torneio.");
+        toast.error(result.error || "Falha ao carregar dados do torneio.");
     }
   }
 
@@ -107,18 +108,18 @@ export default function Chaveamento() {
   
   const gerarChaveamento = async () => {
     if (!displayedTournament) {
-      alert("❌ Selecione ou crie um torneio primeiro!");
+      toast.error("Selecione ou crie um torneio primeiro!");
       return;
     }
 
     if (displayedTournament.status !== 'draft') {
-        alert("O chaveamento só pode ser gerado para torneios em status DRAFT. Finalize o torneio ATIVO na página de Torneios.");
+        toast.error("O chaveamento só pode ser gerado para torneios em status DRAFT. Finalize o torneio ATIVO na página de Torneios.");
         return;
     }
 
     if ((displayedTournament.participatingRobots?.length || 0) < 2) {
-         alert("O torneio precisa de no mínimo 2 robôs participantes. Defina-os na página de Torneios.");
-         return;
+        toast.error("O torneio precisa de no mínimo 2 robôs participantes. Defina-os na página de Torneios.");
+        return;
     }
 
     setLoading(true);
@@ -127,9 +128,9 @@ export default function Chaveamento() {
     
     if (result.ok) {
         // O WebSocket se encarregará de chamar fetchGlobalState(null), o que carregará o novo torneio ATIVO
-        alert(result.message);
+        toast.success(result.message);
     } else {
-        alert(result.error || "❌ Falha ao gerar chaveamento.");
+        toast.error(result.error || "Falha ao gerar chaveamento.");
     }
 
     setLoading(false);
@@ -139,10 +140,10 @@ export default function Chaveamento() {
   const iniciarCombate = async (matchId: string) => {
     try {
       await api(`/matches/${matchId}/start`, { method: "POST" });
-      alert("🚀 Combate iniciado!");
+      toast.success("Combate iniciado!");
     } catch (err) {
       console.error("Erro ao iniciar combate:", err);
-      alert("❌ Falha ao iniciar o combate.");
+      toast.error("Falha ao iniciar o combate.");
     }
   };
 

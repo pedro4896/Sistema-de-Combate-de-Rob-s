@@ -3,6 +3,7 @@ import { api } from "../api";
 import { onMessage } from "../ws";
 import { Bot } from "lucide-react";
 import { s } from "framer-motion/client";
+import toast from "react-hot-toast";
 
 interface Robot {
   id: string;
@@ -71,13 +72,13 @@ const submitJudges = async () => {
     headers: { "Content-Type": "application/json" },
   });
 
-  alert(`pontuações enviadas!`);
+  toast.success(`pontuações enviadas!`);
   setShowModal(false);
 };
 
 
 const submitResult = async () => {
-  if (!selectedRobotId) return alert("❌ Selecione um robô!");
+  if (!selectedRobotId) return toast.error("Selecione um robô!");
   
   // Define o tipo de decisão (K.O ou W.O)
   const decision = resultType === "KO" ? "KO" : "WO";
@@ -93,7 +94,7 @@ const submitResult = async () => {
     headers: { "Content-Type": "application/json" },
   });
 
-  alert(`${resultType} aplicado! Robô ${selectedRobotId} ganhou com 33 pontos`);
+  toast.success(`${resultType} aplicado! Robô ${selectedRobotId} ganhou com 33 pontos`);
   setShowModal(false);  // Fecha o modal
   setSelectedRobotId(null);  // Reseta o robô selecionado
 };

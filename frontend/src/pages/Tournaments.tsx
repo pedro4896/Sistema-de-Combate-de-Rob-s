@@ -2,8 +2,8 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
-import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play } from "lucide-react";
-import toast from "react-hot-toast";
+import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play, X } from "lucide-react";
+import toast from "react-hot-toast"; // Assumindo que você tem um provider para react-hot-toast
 
 type Robot = { id: string; name: string; team: string; };
 type Tournament = { 
@@ -25,6 +25,53 @@ type ArenaState = {
     // ... outros campos
 };
 
+// Interface para o estado do Modal de Confirmação
+interface ConfirmationDialog {
+    open: boolean;
+    title: string;
+    description: string;
+    action: () => void; // Função a ser executada na confirmação
+}
+
+// Componente Simulado de AlertDialog para substituir window.confirm
+const CustomAlertDialog = ({ open, title, description, action, onClose }: {
+    open: boolean;
+    title: string;
+    description: string;
+    action: () => void;
+    onClose: () => void;
+}) => {
+    if (!open) return null;
+
+    const handleConfirm = () => {
+        action();
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-sm text-center shadow-2xl border border-red-400/30">
+                <h2 className="text-xl font-bold text-red-400 mb-4">{title}</h2>
+                <p className="text-white/80 mb-6">{description}</p>
+                <div className="flex justify-between mt-4">
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 bg-gray-600 rounded-lg hover:opacity-80"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={handleConfirm}
+                        className="px-4 py-2 bg-red-700 text-white font-bold rounded-lg hover:bg-red-600"
+                    >
+                        Confirmar Ação
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export default function Tournaments() {
   const [state, setState] = useState<ArenaState>({ robots: [], tournaments: [], tournamentId: null });
   const [newTourName, setNewTourName] = useState("");
@@ -37,14 +84,20 @@ export default function Tournaments() {
   const [editing, setEditing] = useState<Tournament | null>(null);
   const [managingRobots, setManagingRobots] = useState<Tournament | null>(null);
   const [selectedRobots, setSelectedRobots] = useState<string[]>([]);
+
+  // NOVO ESTADO PARA GERENCIAR O MODAL DE CONFIRMAÇÃO
+  const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialog>({
+      open: false,
+      title: "",
+      description: "",
+      action: () => {},
+  });
   
-  // CLASSE DE ESTILO REUTILIZÁVEL (Baseada na página Robots)
   const inputStyle = "px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white";
 
 
   function refresh(s: any) { 
     setState(s);
-    // Atualiza a lista de robôs selecionados se estivermos em modo de gerenciamento
     if (managingRobots) {
         const currentTour = s.tournaments.find((t: Tournament) => t.id === managingRobots.id);
         if (currentTour) {
@@ -81,7 +134,7 @@ export default function Tournaments() {
       setNewTourDate("");
       setNewTourImage("");
     } else {
-      toast.error("Falha ao criar o torneio.", { duration: 3000 });
+      toast.error(result.error || "Falha ao criar o torneio.", { duration: 3000 });
     }
     setLoading(false);
   };
@@ -105,51 +158,63 @@ export default function Tournaments() {
         toast.success(`Torneio "${editing.name}" atualizado!`, { duration: 3000 });
         setEditing(null);
       } else {
-        toast.error("Falha ao atualizar o torneio.", { duration: 3000 });
+        toast.error(result.error || "Falha ao atualizar o torneio.", { duration: 3000 });
       }
   };
 
-  const handleDeleteTournament = async (id: string, name: string) => {
-    if (!window.confirm(`Tem certeza que deseja deletar o torneio "${name}"? Todas as partidas relacionadas serão excluídas.`)) return;
-
-    const result = await api(`/tournaments/${id}`, { method: "DELETE" });
-
-    if (result.ok) {
-        toast.success(result.message, { duration: 3000 });
-    } else {
-        toast.error(result.error || "Falha ao deletar o torneio.", { duration: 3000 });
-    }
+  // Funções que agora usam o modal de confirmação
+  const handleDeleteTournament = (id: string, name: string) => {
+    setConfirmationDialog({
+        open: true,
+        title: `Deletar Torneio "${name}"`,
+        description: `Esta ação não pode ser desfeita. Todas as partidas de "${name}" serão excluídas. Confirma?`,
+        action: async () => {
+             const result = await api(`/tournaments/${id}`, { method: "DELETE" });
+             if (result.ok) {
+                 toast.success(result.message, { duration: 3000 });
+             } else {
+                 toast.error(result.error || "Falha ao deletar o torneio.", { duration: 3000 });
+             }
+        }
+    });
   };
   
-  const handleActivateTournament = async (id: string, name: string) => {
+  const handleActivateTournament = (id: string, name: string) => {
     const currentTour = state.tournaments.find(t => t.id === id);
     if (!currentTour || (currentTour.participatingRobots?.length || 0) < 2) {
         toast.error("O torneio precisa de no mínimo 2 robôs para gerar o chaveamento. Use o botão Gerenciar Robôs.", { duration: 3000 });
-         return;
+        return;
     }
-
-    if (!window.confirm(`Deseja ATIVAR o torneio "${name}"? Isso irá gerar o chaveamento inicial e torná-lo o torneio principal.`)) return;
     
-    // O endpoint /activate agora lida com a geração de matches se o status for 'draft'
-    const result = await api(`/tournaments/${id}/activate`, { method: "POST" });
-    
-    if (result.ok) {
-        toast.success(result.message, { duration: 3000 });
-    } else {
-        toast.error(result.error || "Falha ao ativar/gerar o chaveamento.", { duration: 3000 });
-    }
+    setConfirmationDialog({
+        open: true,
+        title: `Ativar Torneio "${name}"`,
+        description: `Isto irá gerar o chaveamento e definir "${name}" como o torneio ATIVO. Você poderá continuar a edição das regras na página de chaveamento. Confirma a ativação?`,
+        action: async () => {
+            const result = await api(`/tournaments/${id}/activate`, { method: "POST" });
+            if (result.ok) {
+                toast.success(result.message, { duration: 3000 });
+            } else {
+                toast.error(result.error || "Falha ao ativar/gerar o chaveamento.", { duration: 3000 });
+            }
+        }
+    });
   };
 
-  const handleFinalizeTournament = async (id: string, name: string) => {
-    if (!window.confirm(`Tem certeza que deseja FINALIZAR o torneio "${name}"?`)) return;
-
-    const result = await api(`/tournaments/${id}/finalize`, { method: "POST" });
-    
-    if (result.ok) {
-        toast.success(result.message, { duration: 3000 });
-    } else {
-        toast.error(result.error || "❌ Falha ao finalizar o torneio.", { duration: 3000 });
-    }
+  const handleFinalizeTournament = (id: string, name: string) => {
+    setConfirmationDialog({
+        open: true,
+        title: `Finalizar Torneio "${name}"`,
+        description: `Isto irá mudar o status de "${name}" para FINALIZADO e desativá-lo. Confirma?`,
+        action: async () => {
+            const result = await api(`/tournaments/${id}/finalize`, { method: "POST" });
+            if (result.ok) {
+                toast.success(result.message, { duration: 3000 });
+            } else {
+                toast.error(result.error || "Falha ao finalizar o torneio.", { duration: 3000 });
+            }
+        }
+    });
   };
 
   // --- Lógica de Gerenciamento de Robôs ---
@@ -196,7 +261,7 @@ export default function Tournaments() {
         setManagingRobots(null);
         setSelectedRobots([]);
     } else {
-        toast.error(result.error || "❌ Falha ao salvar a lista de robôs.", { duration: 3000 });
+        toast.error(result.error || "Falha ao salvar a lista de robôs.", { duration: 3000 });
     }
   };
 
@@ -207,6 +272,15 @@ export default function Tournaments() {
         <Swords /> Gerenciamento de Torneios
       </h1>
       <hr className="mb-8 border-white/20" />
+
+      {/* MODAL DE CONFIRMAÇÃO REUTILIZÁVEL (Substitui window.confirm) */}
+      <CustomAlertDialog
+          open={confirmationDialog.open}
+          title={confirmationDialog.title}
+          description={confirmationDialog.description}
+          action={confirmationDialog.action}
+          onClose={() => setConfirmationDialog({ ...confirmationDialog, open: false })}
+      />
 
       {/* ---------- FORMULÁRIO DE CRIAÇÃO ---------- */}
       <div className="bg-white/10 p-6 rounded-2xl shadow-xl mb-10">
@@ -301,7 +375,7 @@ export default function Tournaments() {
             animate={{ opacity: 1, y: 0 }} 
             transition={{ duration: 0.3 }}
           >
-            {/* NOVO: IMAGEM DO TORNEIO */}
+            {/* IMAGEM DO TORNEIO */}
             <div className="w-24 h-24 mr-4 flex-shrink-0 rounded-lg overflow-hidden flex items-center justify-center bg-black/40">
                 {tour.image ? (
                     <img 
@@ -323,7 +397,7 @@ export default function Tournaments() {
                   {tour.status === 'draft' && <span className="text-sm font-normal bg-yellow-500 text-black px-2 py-0.5 rounded">DRAFT</span>}
               </div>
               <p className="text-sm text-white/70 mt-1">{tour.description || "Sem descrição."}</p>
-              {/* NOVO: ADICIONA A DATA */}
+              {/* DATA DO TORNEIO */}
               <p className="text-xs text-white/60 mt-1">
                   Data: {tour.date || "N/A"}
               </p>

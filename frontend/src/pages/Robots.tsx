@@ -2,11 +2,66 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, X } from "lucide-react";
 import { Bot } from "lucide-react";
 import { Edit3 } from "lucide-react";
+import toast from "react-hot-toast";
 
 type Robot = { id:string; name:string; team:string; image?:string, score?:number; };
+
+// Interface para o estado do Modal de Confirmação
+interface ConfirmationDialog {
+    open: boolean;
+    title: string;
+    description: string;
+    action: () => void; // Função a ser executada na confirmação
+}
+
+// Componente Simulado de AlertDialog para substituir window.confirm/alert
+const CustomAlertDialog = ({ open, title, description, action, onClose }: {
+    open: boolean;
+    title: string;
+    description: string;
+    action: () => void;
+    onClose: () => void;
+}) => {
+    if (!open) return null;
+
+    const handleConfirm = () => {
+        action();
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-sm text-center shadow-2xl border border-red-400/30 relative">
+                <button 
+                    onClick={onClose}
+                    className="absolute top-3 right-3 text-white/70 hover:text-white transition"
+                >
+                    <X size={20} />
+                </button>
+                <h2 className="text-xl font-bold text-red-400 mb-4">{title}</h2>
+                <p className="text-white/80 mb-6">{description}</p>
+                <div className="flex justify-between mt-4">
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 bg-gray-600 rounded-lg hover:opacity-80"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={handleConfirm}
+                        className="px-4 py-2 bg-red-700 text-white font-bold rounded-lg hover:bg-red-600"
+                    >
+                        Confirmar Ação
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 export default function Robots() {
   const [robots, setRobots] = useState<Robot[]>([]);
@@ -18,18 +73,30 @@ export default function Robots() {
   const [editName, setEditName] = useState("");
   const [editTeam, setEditTeam] = useState("");
   const [editImage, setEditImage] = useState("");
+  const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialog>({
+      open: false,
+      title: "",
+      description: "",
+      action: () => {},
+  });
+
+
+  // CLASSE DE ESTILO PADRÃO PARA INPUTS
+  const inputStyle = "px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white";
+  // Estilo para inputs dentro de modais
+  const modalInputStyle = "w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center";
+
 
   function refresh(s:any){ setRobots(s.robots); }
   useEffect(()=>{ api("/state").then(r=>refresh(r.state)); return onMessage(m=>m.type==="UPDATE_STATE"&&refresh(m.payload.state)); },[]);
 
-  // CORRIGIDO: Agora verifica o retorno da API para saber se foi bem-sucedido.
+  // CORRIGIDO: Usa toast para notificações
   async function addRobot(){
     if(!name.trim()){
-      alert("O nome do robô é obrigatório.");
+      toast.error("O nome do robô é obrigatório.");
       return;
     }
     
-    // Normaliza team e image para enviar null (compatível com o backend)
     const robotData = {
       name,
       team: team.trim() || null, 
@@ -37,19 +104,16 @@ export default function Robots() {
       score
     };
 
-    // A função api retorna um objeto { ok, error, ... }
     const result = await api("/robots", {
         method:"POST",
-        body: robotData // api.ts fará JSON.stringify
+        body: robotData
     });
     
     if (result.ok) {
-        // Sucesso
-        alert(`✅ Robô "${name}" cadastrado com sucesso!`); 
+        toast.success(`Robô "${name}" cadastrado com sucesso!`); 
         setName(""); setTeam(""); setImage(""); setScore(0);
     } else {
-        // Erro: exibe o erro do backend (incluindo a mensagem de restrição 409)
-        alert(result.error || "❌ Falha ao cadastrar o robô. Erro desconhecido.");
+        toast.error(result.error || "Falha ao cadastrar o robô. Erro desconhecido.");
     }
   }
 
@@ -61,11 +125,10 @@ export default function Robots() {
     setEditImage(robot.image || "");
   };
 
-  // CORRIGIDO: Verifica o retorno da API para saber se foi bem-sucedido.
+  // CORRIGIDO: Usa toast para notificações e verifica restrição de PUT
   const saveEdit = async () => {
     if (!editing) return;
     
-    // Normaliza team e image para enviar null (compatível com o backend)
     const updatedData = {
       name: editName,
       team: editTeam.trim() || null, 
@@ -74,31 +137,37 @@ export default function Robots() {
 
     const result = await api(`/robots/${editing.id}`, {
         method: "PUT",
-        // api.ts fará JSON.stringify
         body: updatedData, 
     });
 
     if (result.ok) {
-        alert(`✅ Robô "${editName}" atualizado com sucesso!`);
+        toast.success(`Robô "${editName}" atualizado com sucesso!`);
         setEditing(null);
     } else {
-        // Erro: exibe o erro do backend
-        alert(result.error || "❌ Falha ao atualizar o robô. Erro desconhecido.");
+        toast.error(result.error || "Falha ao atualizar o robô. Erro desconhecido.");
     }
   };
 
-  async function delRobot(id:string){ 
-      const result = await api(`/robots/${id}`,{method:"DELETE"}); 
-      
-      if (result.ok) {
-          alert("🗑️ Robô removido com sucesso!");
-      } else {
-          alert(result.error || "❌ Falha ao remover o robô.");
-      }
-  }
+  // Funções que ativam o modal de confirmação
+  const confirmDelete = async (id: string) => {
+    const result = await api(`/robots/${id}`,{method:"DELETE"}); 
+    if (result.ok) {
+        toast.success("Robô removido com sucesso!");
+    } else {
+        toast.error(result.error || "Falha ao remover o robô.");
+    }
+  };
 
+  const delRobot = (robot: Robot) => {
+      setConfirmationDialog({
+          open: true,
+          title: `Deletar Robô "${robot.name}"`,
+          description: `Tem certeza que deseja deletar o robô "${robot.name}"? Esta ação não pode ser desfeita.`,
+          action: () => confirmDelete(robot.id),
+      });
+  };
+  
   const renderRobotImage = (robot: Robot, color: string) => {
-    // Verifica se o robô tem imagem e exibe
     if (robot?.image)
       return (
         <img
@@ -108,7 +177,6 @@ export default function Robots() {
         />
       );
 
-    // Fallback caso a imagem não esteja disponível
     return (
       <div
         className={`flex items-center justify-center shadow-inner mb-3`}
@@ -120,13 +188,22 @@ export default function Robots() {
 
   return (
     <div>
+      {/* Modal de Confirmação para Deletar */}
+      <CustomAlertDialog
+          open={confirmationDialog.open}
+          title={confirmationDialog.title}
+          description={confirmationDialog.description}
+          action={confirmationDialog.action}
+          onClose={() => setConfirmationDialog({ ...confirmationDialog, open: false })}
+      />
+      
       <div className="flex flex-wrap gap-3 items-end mb-6">
         <div><label className="sub block mb-1">Nome</label>
-          <input className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-60" value={name} onChange={e=>setName(e.target.value)} /></div>
+          <input className={`${inputStyle} w-60`} value={name} onChange={e=>setName(e.target.value)} /></div>
         <div><label className="sub block mb-1">Equipe</label>
-          <input className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-60" value={team} onChange={e=>setTeam(e.target.value)} /></div>
+          <input className={`${inputStyle} w-60`} value={team} onChange={e=>setTeam(e.target.value)} /></div>
         <div><label className="sub block mb-1">URL da imagem</label>
-          <input className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-96" value={image} onChange={e=>setImage(e.target.value)} /></div>
+          <input className={`${inputStyle} w-96`} value={image} onChange={e=>setImage(e.target.value)} /></div>
         <button className="btn btn-accent flex items-center gap-2" onClick={addRobot}><Plus size={18}/>Cadastrar</button>
       </div>
 
@@ -141,7 +218,7 @@ export default function Robots() {
                 <div className="heading">{r.name}</div>
                 <div className="sub">Equipe: {r.team || "N/A"}</div>
               </div>
-              <button className="ml-auto btn btn-danger" onClick={()=>delRobot(r.id)}><Trash2 size={16}/></button>
+              <button className="ml-auto btn btn-danger" onClick={()=>delRobot(r)}><Trash2 size={16}/></button>
               <button
                 onClick={() => openEdit(r)}
                 className="flex items-center gap-2 bg-yellow-400 text-black px-4 py-2 rounded-lg font-semibold hover:opacity-90 transition"
@@ -165,7 +242,7 @@ export default function Robots() {
               placeholder="Nome"
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
-              className="w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center"
+              className={modalInputStyle}
             />
 
             <input
@@ -173,7 +250,7 @@ export default function Robots() {
               placeholder="Equipe"
               value={editTeam}
               onChange={(e) => setEditTeam(e.target.value)}
-              className="w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center"
+              className={modalInputStyle}
             />
 
             <input
@@ -181,7 +258,7 @@ export default function Robots() {
               placeholder="URL da imagem"
               value={editImage}
               onChange={(e) => setEditImage(e.target.value)}
-              className="w-full p-2 mb-3 rounded bg-white/10 border border-white/20 text-white text-center"
+              className={modalInputStyle}
             />
 
             <div className="flex justify-between mt-4">
