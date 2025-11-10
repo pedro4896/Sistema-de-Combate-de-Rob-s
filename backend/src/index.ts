@@ -328,7 +328,7 @@ async function initDBAndServer() {
   const POSTGRES_PORT = Number(process.env.POSTGRES_PORT || 5432); 
   const POSTGRES_USER = process.env.POSTGRES_USER || "postgres"; 
   const POSTGRES_PASSWORD = process.env.POSTGRES_PASSWORD || "root";
-  const POSTGRES_DB = process.env.POSTGRES_DB || "arenaCombate";
+  const POSTGRES_DB = process.env.POSTGRES_DB || "roboClash";
 
   const connectionConfig = {
     host: POSTGRES_HOST,
@@ -685,55 +685,62 @@ function generateGroupEliminations() {
   broadcastAndSave("UPDATE_STATE", { state });
 }
 
-function checkAndGenerateGrandFinal() {
+function checkAndGenerateGrandFinal(): boolean {
   const groupLabels = Object.keys(state.groupTables || {});
-  if (groupLabels.length === 0) return;
+  if (groupLabels.length === 0) return false;
 
   const champions: Robot[] = [];
 
+  // 1. Coleta os campeões de cada grupo (se a eliminação interna estiver completa)
   for (const g of groupLabels) {
     const gMatches = state.matches
       .filter((m) => m.phase === "elimination" && m.group === g && m.tournamentId === state.tournamentId)
       .sort((a, b) => a.round - b.round);
 
-    if (gMatches.length === 0) return;
+    // Se a eliminação de algum grupo ainda não gerou partidas ou não terminou, retorna.
+    if (gMatches.length === 0) return false;
 
     const rounds = [...new Set(gMatches.map((m) => m.round))].sort((a, b) => a - b);
     const lastRound = rounds[rounds.length - 1];
     const lastRoundMatches = gMatches.filter((m) => m.round === lastRound);
 
     const allFinished = lastRoundMatches.every((m) => m.finished);
-    if (!allFinished) return;
+    if (!allFinished) return false;
 
     const winners = lastRoundMatches.filter((m) => m.winner).map((m) => m.winner).filter(Boolean) as Robot[];
     if (winners.length === 1) champions.push(winners[0]);
-    else return;
+    else return false; 
   }
 
-  const already = state.matches.some(
-    (m) => m.phase === "elimination" && !m.group && m.tournamentId === state.tournamentId
+  // 2. Verifica se a Fase Final (group: null) já foi gerada (checa se o Round 1 existe)
+  const alreadyExists = state.matches.some(
+    (m) => m.phase === "elimination" && m.group === null && m.round === 1 && m.tournamentId === state.tournamentId
   );
-  if (already) return;
+  if (alreadyExists) return false;
 
-  if (champions.length < 2) return;
+  if (champions.length < 2) return false;
 
   const BYE = { id: "bye", name: "BYE", team: "", image: "" } as Robot;
-  const shuffled = [...champions].sort(() => Math.random() - 0.5);
-  if (shuffled.length % 2 !== 0) shuffled.push(BYE);
+  const participants = [...champions].sort(() => Math.random() - 0.5); 
 
-  const finals: Match[] = [];
-  for (let i = 0; i < shuffled.length; i += 2) {
-    const A = shuffled[i];
-    const B = shuffled[i + 1];
+  // Adiciona BYE se o número for ímpar
+  if (participants.length % 2 !== 0) participants.push(BYE);
+
+  const initialRoundMatches: Match[] = [];
+  
+  // 3. Gerar os jogos da primeira rodada (Round 1) - Preenchidos com campeões
+  for (let i = 0; i < participants.length; i += 2) {
+    const A = participants[i];
+    const B = participants[i + 1];
     const isBye = A.id === "bye" || B.id === "bye";
     const winner = isBye ? (A.id !== "bye" ? A : B) : null;
 
-    finals.push({
+    initialRoundMatches.push({
       id: uuidv4(),
-      tournamentId: state.tournamentId, // Adiciona o ID do torneio
+      tournamentId: state.tournamentId,
       phase: "elimination",
       round: 1,
-      group: null,
+      group: null, // <-- FASE FINAL GERAL (group: null)
       robotA: A.id !== "bye" ? A : null,
       robotB: B.id !== "bye" ? B : null,
       scoreA: isBye && winner?.id === A.id ? 33 : 0,
@@ -743,16 +750,43 @@ function checkAndGenerateGrandFinal() {
       type: isBye ? "WO" : "normal",
     } as Match);
   }
+
+  // 4. Gerar os jogos vazios para as rodadas seguintes (estrutura completa: semi, final)
+  let currentMatchesInRound = initialRoundMatches.length;
+  let currentRound = 1;
   
-  if (finals.length > 0) {
-    insertMatches(finals);
+  while (currentMatchesInRound > 1) {
+    const nextRoundMatchesCount = Math.ceil(currentMatchesInRound / 2);
+    for (let i = 0; i < nextRoundMatchesCount; i++) {
+      initialRoundMatches.push({
+        id: uuidv4(),
+        tournamentId: state.tournamentId,
+        phase: "elimination",
+        round: currentRound + 1,
+        group: null, // <-- FASE FINAL GERAL (group: null)
+        robotA: null,
+        robotB: null,
+        scoreA: 0,
+        scoreB: 0,
+        winner: null,
+        finished: false,
+        type: "normal",
+      } as Match);
+    }
+    currentMatchesInRound = nextRoundMatchesCount;
+    currentRound++;
+  }
+
+  if (initialRoundMatches.length > 0) {
+    insertMatches(initialRoundMatches);
+    return true; 
   }
 
   broadcastAndSave("UPDATE_STATE", { state });
+  return false; 
 }
 
-
-function progressGroupEliminations() {
+function progressGroupEliminations(): boolean {
   const groupLabels = Object.keys(state.groupTables || {});
   const newMatches: Match[] = [];
 
@@ -776,9 +810,15 @@ function progressGroupEliminations() {
       .filter((m) => m.winner)
       .map((m) => m.winner) as Robot[];
 
+    // Se é a final do grupo (winners.length <= 1), não há mais rounds a gerar aqui.
     if (winners.length <= 1) continue;
 
     const nextRound = lastRound + 1;
+    
+    // CORREÇÃO: Evita duplicação ao verificar se os jogos da próxima rodada já existem.
+    const alreadyGenerated = groupMatches.some(m => m.round === nextRound);
+    if (alreadyGenerated) continue; 
+
     const BYE = { id: "bye", name: "BYE", team: "", image: "" } as Robot;
     const shuffled = [...winners].sort(() => Math.random() - 0.5);
     if (shuffled.length % 2 !== 0) shuffled.push(BYE);
@@ -791,7 +831,7 @@ function progressGroupEliminations() {
 
       newMatches.push({
         id: uuidv4(),
-        tournamentId: state.tournamentId, // Adiciona o ID do torneio
+        tournamentId: state.tournamentId,
         phase: "elimination",
         round: nextRound,
         group: g,
@@ -807,10 +847,13 @@ function progressGroupEliminations() {
   }
 
   if (newMatches.length > 0) {
-    insertMatches(newMatches);
+    // Atenção: insertMatches chama loadStateFromDBAndBroadcast()
+    insertMatches(newMatches); 
+    return true; // Retorna true se inseriu partidas
   }
   
   broadcastAndSave("UPDATE_STATE", { state });
+  return false; // Retorna false se não inseriu partidas
 }
 
 function updateGroupChampions() {
@@ -916,8 +959,11 @@ function generateEliminationFromGroups() {
 }
 
 async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: 'normal' | 'KO' | 'WO' = 'normal') {
+  if (!dbClient) return;
+  
+  // 1. Obtém o estado atual da partida
   const m = state.matches.find(mm => mm.id === id);
-  if (!m || !dbClient) return;
+  if (!m || !m.tournamentId) return;
 
   let winnerId = null;
   if (m.robotA && m.robotB) {
@@ -925,61 +971,85 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
     else if (scoreB > scoreA) winnerId = m.robotB.id;
   }
   
-  // 1. Atualiza a partida no DB (Adiciona tournament_id no WHERE)
+  // 2. Atualiza a partida no DB
   await dbClient.query(
     `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5 AND tournament_id = $6`,
     [scoreA, scoreB, winnerId, type, id, m.tournamentId]
   );
   
-  // 2. Atualiza o score acumulado dos robôs no DB
-  if (m.robotA && scoreA > 0) await updateRobotScoreInDB(m.robotA.id, scoreA);
-  if (m.robotB && scoreB > 0) await updateRobotScoreInDB(m.robotB.id, scoreB);
+  // 3. Atualiza o score acumulado dos robôs no DB
+  if (m.robotA) await updateRobotScoreInDB(m.robotA.id, scoreA);
+  if (m.robotB) await updateRobotScoreInDB(m.robotB.id, scoreB);
 
-  // 3. Recarrega o estado completo
+  // 4. Recarrega o estado completo e transmite
   await loadStateFromDBAndBroadcast();
 
-  // 4. Aplica lógica de avanço (usa lógica do estado recarregado)
+  // OBTEM A PARTIDA ATUALIZADA DO NOVO ESTADO
   const currentMatchInState = state.matches.find(mm => mm.id === id);
-  if (currentMatchInState) {
-    const isGroupPhase = currentMatchInState.phase === "groups";
+  if (!currentMatchInState) return;
 
-    if (isGroupPhase) {
-      const allGroupsDone = state.matches.filter(x => x.phase === "groups").every(x => x.finished);
-      if (allGroupsDone) generateEliminationFromGroups();
-    } else {
-      const round = currentMatchInState.round;
-      // Filtra matches pelo torneio ativo
-      const currentMatchesInRound = state.matches.filter(x => x.phase === "elimination" && x.round === round && x.group === currentMatchInState.group && x.tournamentId === currentMatchInState.tournamentId);
-      
-      if (currentMatchesInRound.every(x => x.finished)) {
-          const winners = currentMatchesInRound.map(x => x.winner).filter(Boolean) as Robot[];
-          const nextRoundMatches = state.matches.filter(x => x.phase === "elimination" && x.round === round + 1 && x.group === currentMatchInState.group && x.tournamentId === currentMatchInState.tournamentId);
-          
-          const queries = [];
-          for (let i = 0; i < winners.length; i++) {
-              const target = nextRoundMatches[Math.floor(i / 2)];
-              if (!target) continue;
-              
-              if (i % 2 === 0) {
-                  target.robotA = winners[i];
-                  queries.push(dbClient.query(`UPDATE matches SET robot_a_id = $1 WHERE id = $2 AND tournament_id = $3`, [winners[i].id, target.id, target.tournamentId]));
-              } else {
-                  target.robotB = winners[i];
-                  queries.push(dbClient.query(`UPDATE matches SET robot_b_id = $1 WHERE id = $2 AND tournament_id = $3`, [winners[i].id, target.id, target.tournamentId]));
-              }
-          }
-          await Promise.all(queries);
-
-          if (currentMatchInState.group) {
-            progressGroupEliminations();
-            updateGroupChampions();
-            checkAndGenerateGrandFinal();
-          }
-      }
+  // 5. LÓGICA DE GERAÇÃO/AVANÇO
+  
+  // A. Se a fase de grupos terminou, gera a eliminação interna
+  if (currentMatchInState.phase === "groups") {
+    const allGroupsDone = state.matches.filter(x => x.phase === "groups" && x.tournamentId === currentMatchInState.tournamentId).every(x => x.finished);
+    if (allGroupsDone) {
+        if (generateGroupEliminations()) return; // Se gerou, interrompe o fluxo.
     }
+  } 
+  
+  // B. Se a partida finalizada é de eliminação (interna ou final)
+  else if (currentMatchInState.phase === "elimination") {
+        
+        const round = currentMatchInState.round;
+        const group = currentMatchInState.group; 
+
+        // 1. Checa se a rodada inteira terminou (partidas no mesmo round e grupo/sem grupo)
+        const matchesInCurrentRound = state.matches.filter(x => 
+            x.phase === "elimination" && 
+            x.round === round && 
+            x.group === group && 
+            x.tournamentId === currentMatchInState.tournamentId
+        );
+        
+        if (matchesInCurrentRound.every(x => x.finished)) {
+            const winners = matchesInCurrentRound.map(x => x.winner).filter(Boolean) as Robot[];
+            const nextRound = round + 1;
+
+            // 2. Tenta preencher a próxima rodada (se ela existe)
+            const nextRoundMatches = state.matches.filter(x => 
+                x.phase === "elimination" && 
+                x.round === nextRound && 
+                x.group === group && 
+                x.tournamentId === currentMatchInState.tournamentId
+            );
+            
+            if (nextRoundMatches.length > 0) {
+                const queries = [];
+                for (let i = 0; i < winners.length; i++) {
+                    const target = nextRoundMatches[Math.floor(i / 2)];
+                    if (!target) continue;
+                    
+                    const robotKey = i % 2 === 0 ? 'robot_a_id' : 'robot_b_id';
+                    // Atualiza a próxima partida com o vencedor.
+                    queries.push(dbClient.query(`UPDATE matches SET ${robotKey} = $1 WHERE id = $2 AND tournament_id = $3`, [winners[i].id, target.id, target.tournamentId]));
+                }
+                await Promise.all(queries);
+                await loadStateFromDBAndBroadcast(); // Recarrega após preencher as próximas lutas
+            }
+
+            // 3. Lógicas de geração de novas rodadas vazias (só se for mata-mata interno)
+            if (group !== null) {
+                if (progressGroupEliminations()) return; // Se gerou (próxima rodada interna), interrompe.
+                
+                updateGroupChampions(); // Atualiza a flag de campeão do grupo
+                
+                if (checkAndGenerateGrandFinal()) return; // Se gerou a Fase Final, interrompe.
+            } 
+        }
   }
 
-  // 5. Determina a próxima partida e atualiza a configuração
+  // 6. Determina a próxima partida e atualiza a configuração (se nenhuma geração ocorreu)
   const next = state.matches.find(x => !x.finished && x.tournamentId === state.tournamentId);
   if (next) setCurrentMatch(next.id);
   else {
@@ -1561,51 +1631,29 @@ app.post("/matches/:id/judges", async (req, res) => {
 
   const { judges, decision, winnerId } = req.body;
   let totalA = 0, totalB = 0;
-  let finalWinnerId = null;
   let finalType: 'normal' | 'KO' | 'WO' = 'normal';
-
+  
+  // 1. Lógica de Scoring (K.O./W.O. ou por Pontos)
   if (decision === "KO" || decision === "WO") {
     totalA = winnerId === match.robotA?.id ? 33 : 0;
     totalB = winnerId === match.robotB?.id ? 33 : 0;
-    finalWinnerId = winnerId;
     finalType = decision as 'KO' | 'WO';
   } else {
     judges.forEach((j: any) => {
       totalA += j.damageA + j.hitsA;
       totalB += j.damageB + j.hitsB;
     });
-
-    if (totalA !== totalB) {
-      finalWinnerId = totalA > totalB ? match.robotA?.id : match.robotB?.id;
-    }
   }
 
-  // 1. Atualiza o score acumulado dos robôs no DB
-  if (match.robotA && totalA > 0) await updateRobotScoreInDB(match.robotA.id, totalA);
-  if (match.robotB && totalB > 0) await updateRobotScoreInDB(match.robotB.id, totalB);
+  // 2. Chama a função centralizada. Esta função fará o update no DB, 
+  // o reload do estado e a lógica de avanço do chaveamento, com segurança.
+  await finalizeMatch(match.id, totalA, totalB, finalType);
 
-  // 2. Finaliza a partida no DB (Atualizado com tournament_id)
-  await dbClient.query(
-    `UPDATE matches SET finished = TRUE, score_a = $1, score_b = $2, winner_id = $3, type = $4 WHERE id = $5 AND tournament_id = $6`,
-    [totalA, totalB, finalWinnerId, finalType, match.id, match.tournamentId]
-  );
-  
-  // 3. Recarrega o estado completo e aplica lógica de avanço
-  await loadStateFromDBAndBroadcast();
-  
-  const allGroupsFinished = state.matches
-    .filter((m) => m.phase === "groups" && m.tournamentId === state.tournamentId)
-    .every((m) => m.finished);
-
-  if (allGroupsFinished) {
-    generateEliminationFromGroups();
-  }
-
-  progressGroupEliminations();
-  updateGroupChampions();
-  checkAndGenerateGrandFinal();
-
-  res.json({ ok: true, result: state.matches.find((m) => m.id === req.params.id) });
+  // 3. Retorna o estado atualizado (após finalizeMatch)
+  res.json({ 
+    ok: true, 
+    result: state.matches.find((m) => m.id === req.params.id) 
+  });
 });
 
 

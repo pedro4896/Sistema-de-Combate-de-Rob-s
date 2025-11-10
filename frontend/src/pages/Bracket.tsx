@@ -359,7 +359,7 @@ export default function Chaveamento() {
 
       {/* ---------- MATA-MATA POR GRUPO ---------- */}
       <h2 className="text-2xl font-bold mt-16 mb-6 text-center">
-        Mata-Mata Interno dos Grupos
+        Eliminação Interna (Quartas/Semis por Grupo)
       </h2>
       {Object.keys(state.groupTables || {}).map((label) => (
         <div key={label} className="mb-8">
