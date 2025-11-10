@@ -182,12 +182,12 @@ const renderRobotImage = (robot: Robot, color: string) => {
             )}
           </div>
 
-          <h3 className="text-lg font-bold text-center mb-4 text-yellow-400">
+          <h3 className="text-lg font-bold text-center mb-4 text-blue-300">
             Notas dos Jurados
           </h3>
 
           <table className="w-full text-center border-collapse mb-6">
-            <thead className="bg-white/10 text-yellow-400">
+            <thead className="bg-white/10 text-blue-300">
               <tr>
                 <th className="py-2">Jurado</th>
                 <th>Dano (0–6)</th>
@@ -197,7 +197,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
             <tbody>
               {judges.map((j, i) => (
                 <tr key={j.judgeId} className="border-b border-white/10">
-                  <td className="font-semibold text-white py-2">{j.judgeId}</td>
+                  <td className="font-semibold text-blue-300 py-2">{j.judgeId}</td>
                   <td>
                     <input
                       type="number"
@@ -234,12 +234,12 @@ const renderRobotImage = (robot: Robot, color: string) => {
             )}
           </div>
 
-          <h3 className="text-lg font-bold text-center mb-4 text-yellow-400">
+          <h3 className="text-lg font-bold text-center mb-4 text-green-300">
             Notas dos Jurados
           </h3>
 
           <table className="w-full text-center border-collapse mb-6">
-            <thead className="bg-white/10 text-yellow-400">
+            <thead className="bg-white/10 text-green-300">
               <tr>
                 <th className="py-2">Jurado</th>
                 <th>Dano (0–6)</th>
@@ -249,7 +249,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
             <tbody>
               {judges.map((j, i) => (
                 <tr key={j.judgeId} className="border-b border-white/10">
-                  <td className="font-semibold text-white py-2">{j.judgeId}</td>
+                  <td className="font-semibold text-green-300 py-2">{j.judgeId}</td>
                   <td>
                     <input
                       type="number"
@@ -280,7 +280,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
       {/* -------- BOTÃO ENVIAR -------- */}
       <button
         onClick={submitJudges}
-        className="mt-12 bg-yellow-400 text-black font-extrabold px-12 py-4 rounded-2xl text-lg hover:opacity-90 shadow-lg transition"
+        className="mt-12 bg-arena-accent text-black font-extrabold px-12 py-4 rounded-2xl text-lg hover:opacity-90 shadow-lg transition"
       >
         Enviar Pontuação
       </button>
@@ -288,7 +288,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
       <div className="mt-6">
         <button
           onClick={() => setShowModal(true)}
-          className="bg-red-500 text-white font-bold py-3 px-8 rounded-xl hover:opacity-90 transition"
+          className="bg-gradient-to-b from-blue-900/90 to-blue-700/50 text-blue-300 font-bold py-3 px-8 rounded-xl hover:opacity-90 transition"
         >
           KO/WO
         </button>
@@ -296,8 +296,8 @@ const renderRobotImage = (robot: Robot, color: string) => {
 
       {/* ADD: Modal KO/WO */}
       {showModal && match && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl w-[420px] p-6 text-black">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-[#001933] rounded-2xl w-[420px] p-6 text-arena-accent">
             <h3 className="text-xl font-bold text-center mb-4">
               Selecione o vencedor e o resultado
             </h3>
@@ -307,7 +307,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
               <button
                 onClick={() => setSelectedRobotId(match.robotA?.id)}
                 className={`w-full flex items-center gap-3 p-3 rounded-xl border ${
-                  selectedRobotId === match.robotA?.id ? "border-blue-500 bg-blue-50" : "border-gray-200"
+                  selectedRobotId === match.robotA?.id ? "border-blue-500 bg-transparent" : "border-gray-200"
                 }`}
               >
                 {match.robotA?.image ? (
@@ -330,7 +330,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
               <button
                 onClick={() => setSelectedRobotId(match.robotB?.id)}
                 className={`w-full flex items-center gap-3 p-3 rounded-xl border ${
-                  selectedRobotId === match.robotB?.id ? "border-green-500 bg-green-50" : "border-gray-200"
+                  selectedRobotId === match.robotB?.id ? "border-green-500 bg-transparent" : "border-gray-200"
                 }`}
               >
                 {match.robotB?.image ? (
@@ -356,7 +356,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
               <button
                 onClick={() => setResultType("KO")}
                 className={`flex-1 py-2 rounded-lg font-semibold ${
-                  resultType === "KO" ? "bg-red-500 text-white" : "bg-red-100 text-red-700"
+                  resultType === "KO" ? "bg-[#00FF9C] text-[#001224]" : "border border-[#00FF9C] text-[#00FF9C]"
                 }`}
               >
                 K.O
@@ -364,7 +364,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
               <button
                 onClick={() => setResultType("WO")}
                 className={`flex-1 py-2 rounded-lg font-semibold ${
-                  resultType === "WO" ? "bg-orange-500 text-white" : "bg-orange-100 text-orange-700"
+                  resultType === "WO" ? "bg-[#00FF9C] text-[#001224]" : "border border-[#00FF9C] text-[#00FF9C]"
                 }`}
               >
                 W.O
@@ -375,7 +375,7 @@ const renderRobotImage = (robot: Robot, color: string) => {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={submitResult}
-                className="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg disabled:opacity-50"
+                className="flex-1 bg-[#00FF9C] text-[#001224] font-bold py-2 rounded-lg disabled:opacity-50"
                 disabled={!selectedRobotId}
               >
                 Confirmar

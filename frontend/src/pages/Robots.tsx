@@ -221,7 +221,7 @@ export default function Robots() {
               <button className="ml-auto btn btn-danger" onClick={()=>delRobot(r)}><Trash2 size={16}/></button>
               <button
                 onClick={() => openEdit(r)}
-                className="flex items-center gap-2 bg-yellow-400 text-black px-4 py-2 rounded-lg font-semibold hover:opacity-90 transition"
+                className="flex items-center gap-2 btn-accent text-black px-4 py-2 rounded-lg font-semibold hover:opacity-90 transition"
               >
                 <Edit3 size={16} />
               </button>
@@ -233,7 +233,7 @@ export default function Robots() {
       {editing && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-[#001933] p-8 rounded-2xl w-96 text-center shadow-2xl border border-yellow-400/30">
-            <h2 className="text-2xl font-bold text-yellow-400 mb-4">
+            <h2 className="text-2xl font-bold text-arena-accent mb-4">
               Editar Robô
             </h2>
 
@@ -270,7 +270,7 @@ export default function Robots() {
               </button>
               <button
                 onClick={saveEdit}
-                className="px-4 py-2 bg-yellow-400 text-black font-bold rounded-lg hover:opacity-80"
+                className="px-4 py-2 btn-accent text-black font-bold rounded-lg hover:opacity-80"
               >
                 Salvar
               </button>
