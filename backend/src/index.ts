@@ -318,7 +318,7 @@ async function loadStateFromDB(): Promise<ArenaState> {
 // Função de suporte que usa loadStateFromDB
 async function loadStateFromDBAndBroadcast() {
   state = await loadStateFromDB();
-  broadcast("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
   console.log("🔄 Estado recarregado do banco de dados e transmitido.");
 }
 
@@ -366,15 +366,17 @@ initDBAndServer();
 
 /* ------------------ UTILITÁRIOS & FUNÇÕES CORE ------------------ */
 
-function broadcastAndSave(type: string, payload: any) {
-  broadcast(type, payload);
-  saveConfig(); // Salva APENAS o estado da arena/timers
-}
-
-function broadcast(type: string, payload: any) {
+// Função para apenas transmitir (usada para o tick do timer - mais performática)
+function broadcastOnly(type: string, payload: any) {
   const msg = JSON.stringify({ type, payload });
   for (const c of wss.clients)
     if (c.readyState === WebSocket.OPEN) c.send(msg);
+}
+
+// Função para salvar no DB e transmitir (usada para mudanças críticas de estado)
+function saveConfigAndBroadcast(type: string, payload: any) {
+  broadcastOnly(type, payload);
+  saveConfig(); // Chamada para salvar no DB (assíncrona)
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -422,22 +424,36 @@ function setCurrentMatch(id: string | null) {
   resetTimers();
   state.mainStatus = "idle";
   if (id) state.winner = null;
-  broadcastAndSave("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
 }
 
 function startMainTimer(seconds = 180) {
   stopAllTimers();
   state.mainTimer = seconds;
   state.mainStatus = "running";
-  broadcastAndSave("UPDATE_STATE", { state });
+  
+  // 1. Envia comando LED para Luta Iniciada (BRANCO)
+  broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_RUNNING" }); 
+  
+  // 2. Salva o estado crítico no DB apenas UMA VEZ ao iniciar
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
+  
+  // Apenas transmite o tick no intervalo (muito mais leve!)
   mainTick = setInterval(() => {
     if (state.mainStatus !== "running") return;
     state.mainTimer = Math.max(0, state.mainTimer - 1);
-    broadcastAndSave("UPDATE_STATE", { state });
+    
+    // CORREÇÃO: Usa broadcastOnly para evitar I/O de DB a cada segundo
+    broadcastOnly("UPDATE_STATE", { state }); 
+    
+    // Salva no DB a cada 10 segundos para persistência, se não for 0.
+    if (state.mainTimer > 0 && state.mainTimer % 10 === 0) saveConfig();
+
     if (state.mainTimer === 0) endMatchNow();
   }, 1000);
 }
 
+// backend/src/index.ts - Modifique startRecoveryTimer (Aprox. linha 391)
 function startRecoveryTimer(seconds = 10, resume = false) {
   if (!resume && state.mainStatus === "running") {
     state.mainStatus = "paused";
@@ -448,19 +464,24 @@ function startRecoveryTimer(seconds = 10, resume = false) {
   state.recoveryActive = true;
   state.recoveryPaused = false;
   state.recoveryTimer = seconds;
-  broadcastAndSave("UPDATE_STATE", { state });
+  
+  // Envia comando LED para Pausa/Recuperação (VERMELHO)
+  broadcastOnly("LED_COMMAND", { command: "STATE_RECOVERY_ACTIVE" }); 
+  
+  // Salva o estado crítico no DB ao iniciar o recovery
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
 
   recoveryTick = setInterval(() => {
     if (state.recoveryPaused) return;
 
     state.recoveryTimer = Math.max(0, state.recoveryTimer - 1);
-    broadcastAndSave("UPDATE_STATE", { state });
+    broadcastOnly("UPDATE_STATE", { state }); // Usa broadcastOnly no tick
 
     if (state.recoveryTimer === 0) {
       clearInterval(recoveryTick!);
-      state.recoveryActive = true;
+      state.recoveryActive = false; // Corrigido: deve ser false ao terminar o timer
       state.recoveryPaused = false;
-      broadcastAndSave("UPDATE_STATE", { state });
+      saveConfigAndBroadcast("UPDATE_STATE", { state }); 
 
       if (state.mainTimer > 0) startMainTimer(state.mainTimer);
       else endMatchNow();
@@ -468,11 +489,16 @@ function startRecoveryTimer(seconds = 10, resume = false) {
   }, 1000);
 }
 
+// backend/src/index.ts - Modifique endMatchNow (Aprox. linha 411)
 function endMatchNow() {
   stopAllTimers();
   state.mainStatus = "finished";
   state.recoveryActive = false;
-  broadcastAndSave("UPDATE_STATE", { state });
+  
+  // Transmite fim da luta (VERMELHO) - caso o cronômetro chegue a zero
+  broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_ENDED" });
+  
+  saveConfigAndBroadcast("UPDATE_STATE", { state }); 
 }
 
 function authenticateToken(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -496,7 +522,7 @@ function startMatch(id: string) {
   state.mainStatus = "idle";
   state.winner = null;
 
-  broadcastAndSave("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
 }
 
 /* ------------------ LÓGICA DE CHAVEAMENTO ------------------ */
@@ -682,7 +708,7 @@ function generateGroupEliminations() {
     insertMatches(newMatches);
   }
   
-  broadcastAndSave("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
 }
 
 function checkAndGenerateGrandFinal(): boolean {
@@ -782,7 +808,7 @@ function checkAndGenerateGrandFinal(): boolean {
     return true; 
   }
 
-  broadcastAndSave("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
   return false; 
 }
 
@@ -852,7 +878,7 @@ function progressGroupEliminations(): boolean {
     return true; // Retorna true se inseriu partidas
   }
   
-  broadcastAndSave("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
   return false; // Retorna false se não inseriu partidas
 }
 
@@ -886,7 +912,7 @@ function updateGroupChampions() {
   }
 
   if (changed) {
-    broadcastAndSave("UPDATE_STATE", { state });
+    saveConfigAndBroadcast("UPDATE_STATE", { state });
   }
 }
 
@@ -955,7 +981,7 @@ function generateEliminationFromGroups() {
   
   const first = state.matches.find(m => !m.finished && m.tournamentId === state.tournamentId);
   setCurrentMatch(first?.id || null);
-  broadcastAndSave("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
 }
 
 async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: 'normal' | 'KO' | 'WO' = 'normal') {
@@ -1055,7 +1081,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
   else {
     state.currentMatchId = null;
     state.mainStatus = "finished";
-    broadcastAndSave("UPDATE_STATE", { state });
+    saveConfigAndBroadcast("UPDATE_STATE", { state });
   }
 }
 
@@ -1167,7 +1193,7 @@ async function activateTournament(tournamentId: string) {
     setCurrentMatch(nextMatch?.id ?? null);
     
     // Garante que o estado final seja salvo e transmitido
-    broadcastAndSave("UPDATE_STATE", { state });
+    saveConfigAndBroadcast("UPDATE_STATE", { state });
     return { ok: true, message: `Torneio "${tournament.name}" ativado e chaveamento gerado.` };
 }
 
@@ -1335,7 +1361,7 @@ app.use(authenticateToken);
 // 🆕 Rotas de Gerenciamento do Banco de Dados
 app.post("/db/save", async (_req, res) => {
   await saveConfig();
-  broadcast("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
   res.json({ ok: true, message: "Estado de configuração da arena salvo no banco de dados." });
 });
 
@@ -1573,7 +1599,7 @@ app.post("/matches/generate", (req, res) => {
 app.post("/matches/elimination", (req, res) => {
   const { matches } = req.body;
   state.matches.push(...matches);
-  broadcast("UPDATE_STATE", { state });
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
   res.json({ ok: true });
 });
 
@@ -1754,40 +1780,55 @@ app.put("/robots/:id", async (req, res) => {
 });
 
 
-/* ------------------ WEBSOCKET (Inalterado, usa broadcastAndSave) ------------------ */
+/* ------------------ WEBSOCKET (Inalterado, usa saveConfigAndBroadcast) ------------------ */
 
 wss.on("connection", (ws) => {
+  // Envia o estado atual para o cliente que acabou de se conectar
   ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
+  
+  // NOVO: Garante que o LED inicie no estado IDLE_NORMAL para o novo cliente
+  if (state.mainStatus === "idle" && !state.recoveryActive) {
+      ws.send(JSON.stringify({ type: "LED_COMMAND", payload: { command: "STATE_IDLE_NORMAL" } }));
+  }
+
+
   ws.on("message", (raw) => {
     try {
       const { type, payload } = JSON.parse(String(raw));
       switch (type) {
         case "START_MAIN":
           if (recoveryTick) clearInterval(recoveryTick);
-          state.recoveryTimer = 10;
+          state.recoveryTimer = 0; // Se estiver em 10, reseta para 0 para não interferir
           state.recoveryActive = false;
           state.recoveryPaused = false;
+          
+          startMainTimer(180); // Esta função agora envia STATE_FIGHT_RUNNING e faz o save
 
-          startMainTimer(180);
-          broadcastAndSave("UPDATE_STATE", { state });
+          // NOTA: 'startMainTimer' não deve ter 'broadcastAndSave' aqui; a lógica está DENTRO dela.
+          // Se você ainda precisa de uma confirmação, use apenas:
+          // saveConfig(); 
           break;
 
 
         case "PAUSE_MAIN":
           if (mainTick) clearInterval(mainTick);
           state.mainStatus = "paused";
-          broadcastAndSave("UPDATE_STATE", { state });
+          
+          // Envia comando LED para Pausa (VERMELHO)
+          broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_PAUSED" });
+          saveConfigAndBroadcast("UPDATE_STATE", { state });
           break;
 
         case "RESUME_MAIN":
           if (recoveryTick) clearInterval(recoveryTick);
-          state.recoveryTimer = 10;
+          state.recoveryTimer = 0;
           state.recoveryActive = false;
           state.recoveryPaused = false;
-
+          
           if (state.mainTimer > 0) {
-            startMainTimer(state.mainTimer);
+            startMainTimer(state.mainTimer); // Esta função agora envia STATE_FIGHT_RUNNING
           }
+          // Se o timer for 0, startMainTimer chama endMatchNow
           break;
 
 
@@ -1795,41 +1836,75 @@ wss.on("connection", (ws) => {
           if (mainTick) clearInterval(mainTick);
           state.mainTimer = 180;
           state.mainStatus = "idle";
-          broadcastAndSave("UPDATE_STATE", { state });
+          
+          // Volta ao estado IDLE NORMAL
+          broadcastOnly("LED_COMMAND", { command: "STATE_IDLE_NORMAL" });
+          saveConfigAndBroadcast("UPDATE_STATE", { state });
           break;
 
 
         case "START_RECOVERY":
+          // startRecoveryTimer já envia STATE_RECOVERY_ACTIVE e faz o save
           startRecoveryTimer(payload?.seconds ?? 10);
           break;
 
         case "PAUSE_RECOVERY":
           state.recoveryPaused = true;
-          broadcastAndSave("UPDATE_STATE", { state });
+          saveConfigAndBroadcast("UPDATE_STATE", { state });
           break;
 
         case "RESUME_RECOVERY":
           if (state.recoveryTimer > 0) {
             state.recoveryPaused = false;
-            startRecoveryTimer(state.recoveryTimer, true);
+            startRecoveryTimer(state.recoveryTimer, true); 
           }
           break;
 
 
         case "RESET_RECOVERY":
           if (recoveryTick) clearInterval(recoveryTick);
-          state.recoveryTimer = 10;
+          state.recoveryTimer = 0; // Corrigido: Para não ficar com '10' como default
           state.recoveryActive = false;
           state.recoveryPaused = false;
-          broadcastAndSave("UPDATE_STATE", { state });
+          
+          // Volta ao estado IDLE NORMAL
+          broadcastOnly("LED_COMMAND", { command: "STATE_IDLE_NORMAL" });
+          saveConfigAndBroadcast("UPDATE_STATE", { state });
           break;
 
 
         case "END_MATCH":
-          endMatchNow();
+          endMatchNow(); // Esta função agora envia STATE_FIGHT_ENDED
+          break;
+          
+        case "LIGHT_TOGGLE": // NOVO: Lógica de Botões Físicos
+          const targetSide = payload?.side; // 'GREEN', 'BLUE', ou 'NORMAL'
+          
+          if (state.mainStatus === "running" || state.recoveryActive) {
+            // Regra 1: Se a luta estiver rodando, PAUSA (VERMELHO)
+            if (mainTick) clearInterval(mainTick);
+            state.mainStatus = "paused";
+            broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_PAUSED" });
+            saveConfigAndBroadcast("UPDATE_STATE", { state }); // Sincroniza estado de pausa com o frontend
+            
+          } else {
+            // Regra 2: Se estiver IDLE, alterna o lado
+            if (targetSide === 'GREEN') {
+                broadcastOnly("LED_COMMAND", { command: "STATE_IDLE_GREEN_OFF" });
+            } else if (targetSide === 'BLUE') {
+                broadcastOnly("LED_COMMAND", { command: "STATE_IDLE_BLUE_OFF" });
+            } else {
+                // Se o comando for NORMAL (ou reset), volta ao IDLE padrão.
+                broadcastOnly("LED_COMMAND", { command: "STATE_IDLE_NORMAL" });
+            }
+            // Apenas envia a atualização para o frontend, não altera o timer principal.
+            broadcastOnly("UPDATE_STATE", { state }); 
+          }
           break;
       }
-    } catch {}
+    } catch (e) {
+        console.error("Erro no processamento da mensagem WebSocket:", e);
+    }
   });
 });
 
