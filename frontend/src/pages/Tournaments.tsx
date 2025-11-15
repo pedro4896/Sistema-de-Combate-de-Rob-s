@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
-import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play, X } from "lucide-react";
+import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play, X, Upload } from "lucide-react";
 import toast from "react-hot-toast"; // Assumindo que você tem um provider para react-hot-toast
 
 type Robot = { id: string; name: string; team: string; };
@@ -10,7 +10,7 @@ type Tournament = {
   id: string; 
   name: string; 
   description?: string; 
-  date?: string;
+  date?: string; // Mantido para exibição, mas preenchido pelo backend
   image?: string;
   status: 'draft' | 'active' | 'finished';
   advancePerGroup: number; 
@@ -76,14 +76,20 @@ export default function Tournaments() {
   const [state, setState] = useState<ArenaState>({ robots: [], tournaments: [], tournamentId: null });
   const [newTourName, setNewTourName] = useState("");
   const [newTourDesc, setNewTourDesc] = useState("");
-  const [newTourDate, setNewTourDate] = useState("");
   const [newTourImage, setNewTourImage] = useState("");
   const [newGroupCount, setNewGroupCount] = useState(2);
   const [newAdvancePerGroup, setNewAdvancePerGroup] = useState(2);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Tournament | null>(null);
+  // NOVO STATE para a imagem no modal de edição
+  const [editImage, setEditImage] = useState("");
+  
   const [managingRobots, setManagingRobots] = useState<Tournament | null>(null);
   const [selectedRobots, setSelectedRobots] = useState<string[]>([]);
+
+  // NOVOS STATES: para gerenciar o nome do arquivo selecionado (UX)
+  const [newTourFileName, setNewTourFileName] = useState("");
+  const [editTourFileName, setEditTourFileName] = useState("");
 
   // NOVO ESTADO PARA GERENCIAR O MODAL DE CONFIRMAÇÃO
   const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialog>({
@@ -95,6 +101,36 @@ export default function Tournaments() {
   
   const inputStyle = "px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white";
 
+  // NOVA FUNÇÃO: Converte arquivo para Base64 e atualiza o estado
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, setTargetImage: React.Dispatch<React.SetStateAction<string>>, setTargetFileName: React.Dispatch<React.SetStateAction<string>>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+        setTargetImage("");
+        setTargetFileName("");
+        return;
+    }
+
+    if (file.size > 1024 * 1024) { // Limite de 1MB
+        toast.error("O arquivo é muito grande (máx: 1MB).");
+        e.target.value = '';
+        setTargetImage("");
+        setTargetFileName("");
+        return;
+    }
+    
+    setTargetFileName(file.name);
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+        setTargetImage(reader.result as string);
+    };
+    reader.onerror = () => {
+        toast.error("Falha ao ler o arquivo.");
+        setTargetImage("");
+        setTargetFileName("");
+    };
+    reader.readAsDataURL(file);
+  };
 
   function refresh(s: any) { 
     setState(s);
@@ -120,7 +156,7 @@ export default function Tournaments() {
       body: {
         name: newTourName,
         description: newTourDesc.trim() || null,
-        date: newTourDate.trim() || null,
+        // REMOVIDO: newTourDate, pois é gerado no backend
         image: newTourImage.trim() || null,
         groupCount: newGroupCount,
         advancePerGroup: newAdvancePerGroup,
@@ -131,8 +167,10 @@ export default function Tournaments() {
       toast.success("Torneio Criado com Sucesso", { duration: 3000 });
       setNewTourName("");
       setNewTourDesc("");
-      setNewTourDate("");
       setNewTourImage("");
+      setNewTourFileName(""); // Limpa o nome do arquivo
+      setNewGroupCount(2); // Opcional: resetar para o padrão
+      setNewAdvancePerGroup(2); // Opcional: resetar para o padrão
     } else {
       toast.error(result.error || "Falha ao criar o torneio.", { duration: 3000 });
     }
@@ -147,18 +185,20 @@ export default function Tournaments() {
         body: {
           name: editing.name,
           description: editing.description?.trim() || null,
-          date: editing.date?.trim() || null,
-          image: editing.image?.trim() || null,
+          // REMOVIDO: o campo date é ignorado no backend
+          image: editImage.trim() || null, // Usa o estado de edição atualizado (URL ou Base64)
           groupCount: editing.groupCount,
           advancePerGroup: editing.advancePerGroup,
         },
       });
 
       if (result.ok) {
-        toast.success(`Torneio "${editing.name}" atualizado!`, { duration: 3000 });
+        toast.success(`Torneio "${editing.name}" atualizado!`);
         setEditing(null);
+        setEditImage("");
+        setEditTourFileName(""); // Limpa o nome do arquivo
       } else {
-        toast.error(result.error || "Falha ao atualizar o torneio.", { duration: 3000 });
+        toast.error(result.error || "Falha ao atualizar o torneio.");
       }
   };
 
@@ -171,9 +211,9 @@ export default function Tournaments() {
         action: async () => {
              const result = await api(`/tournaments/${id}`, { method: "DELETE" });
              if (result.ok) {
-                 toast.success(result.message, { duration: 3000 });
+                 toast.success(result.message);
              } else {
-                 toast.error(result.error || "Falha ao deletar o torneio.", { duration: 3000 });
+                 toast.error(result.error || "Falha ao deletar o torneio.");
              }
         }
     });
@@ -182,7 +222,7 @@ export default function Tournaments() {
   const handleActivateTournament = (id: string, name: string) => {
     const currentTour = state.tournaments.find(t => t.id === id);
     if (!currentTour || (currentTour.participatingRobots?.length || 0) < 2) {
-        toast.error("O torneio precisa de no mínimo 2 robôs para gerar o chaveamento. Use o botão Gerenciar Robôs.", { duration: 3000 });
+        toast.error("O torneio precisa de no mínimo 2 robôs para gerar o chaveamento. Use o botão Gerenciar Robôs.");
         return;
     }
     
@@ -193,9 +233,9 @@ export default function Tournaments() {
         action: async () => {
             const result = await api(`/tournaments/${id}/activate`, { method: "POST" });
             if (result.ok) {
-                toast.success(result.message, { duration: 3000 });
+                toast.success(result.message);
             } else {
-                toast.error(result.error || "Falha ao ativar/gerar o chaveamento.", { duration: 3000 });
+                toast.error(result.error || "Falha ao ativar/gerar o chaveamento.");
             }
         }
     });
@@ -209,9 +249,9 @@ export default function Tournaments() {
         action: async () => {
             const result = await api(`/tournaments/${id}/finalize`, { method: "POST" });
             if (result.ok) {
-                toast.success(result.message, { duration: 3000 });
+                toast.success(result.message);
             } else {
-                toast.error(result.error || "Falha ao finalizar o torneio.", { duration: 3000 });
+                toast.error(result.error || "Falha ao finalizar o torneio.");
             }
         }
     });
@@ -220,13 +260,20 @@ export default function Tournaments() {
   // --- Lógica de Gerenciamento de Robôs ---
   const openRobotManager = (tournament: Tournament) => {
     if (tournament.status !== 'draft') {
-        toast.error("Apenas torneios em status 'draft' podem ter os robôs gerenciados.", { duration: 3000 });
+        toast.error("Apenas torneios em status 'draft' podem ter os robôs gerenciados.");
         return;
     }
     setManagingRobots(tournament);
     setSelectedRobots(tournament.participatingRobotIds || []);
   };
   
+  // Abre modal de edição (ATUALIZADO para usar o estado de edição)
+  const openEdit = (tournament: Tournament) => {
+    setEditing(tournament);
+    setEditImage(tournament.image || "");
+    setEditTourFileName("");
+  };
+
   const toggleRobotSelection = (robotId: string) => {
     setSelectedRobots(prev => 
       prev.includes(robotId) 
@@ -247,7 +294,7 @@ export default function Tournaments() {
     if (!managingRobots) return;
     
     if (managingRobots.status !== 'draft') {
-        toast.error("Erro: O torneio não está mais em status 'draft'.", { duration: 3000 });
+        toast.error("Erro: O torneio não está mais em status 'draft'.");
         return;
     }
 
@@ -257,11 +304,11 @@ export default function Tournaments() {
     });
 
     if (result.ok) {
-        toast.success(result.message, { duration: 3000 });
+        toast.success(result.message);
         setManagingRobots(null);
         setSelectedRobots([]);
     } else {
-        toast.error(result.error || "Falha ao salvar a lista de robôs.", { duration: 3000 });
+        toast.error(result.error || "Falha ao salvar a lista de robôs.");
     }
   };
 
@@ -309,27 +356,43 @@ export default function Tournaments() {
             />
           </div>
 
-          {/* Input Data */}
-          <div>
-            <label className="sub block mb-1">Data</label>
-            <input
-              className={`${inputStyle} w-40`}
-              placeholder="Data (AAAA-MM-DD)"
-              value={newTourDate}
-              onChange={(e) => setNewTourDate(e.target.value)}
+          {/* Input Imagem URL/Upload (NOVO) */}
+          <div className="w-96">
+            <label className="sub block mb-1">Imagem do Torneio (Upload ou URL, máx: 1MB)</label>
+            <div className="flex items-center gap-2">
+                <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={(e) => handleFileUpload(e, setNewTourImage, setNewTourFileName)} 
+                    className="hidden" 
+                    id="new-tour-file-upload"
+                    disabled={newTourImage.length > 0 && !newTourImage.startsWith('data:')}
+                />
+                <label 
+                    htmlFor="new-tour-file-upload" 
+                    className={`cursor-pointer px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition flex items-center justify-center gap-2 flex-grow 
+                        ${newTourFileName || (newTourImage.length > 0 && newTourImage.startsWith('data:')) ? 'text-green-400 border-green-400/30' : ''} 
+                        ${newTourImage.length > 0 && !newTourImage.startsWith('data:') ? 'opacity-50 cursor-not-allowed' : ''}`
+                    }
+                >
+                    <Upload size={18} />
+                    {newTourFileName || (newTourImage.length > 0 && newTourImage.startsWith('data:')) ? 
+                        `Arquivo: ${newTourFileName || 'Base64 (' + Math.ceil(newTourImage.length/1024) + 'KB)'}` :
+                        "Upload da Imagem (máx: 1MB)"
+                    }
+                </label>
+            </div>
+            {/* Campo para inserir URL (se não for Base64) */}
+            <input 
+                type="text"
+                className={`${inputStyle} w-full mt-2`} 
+                value={newTourImage.startsWith('data:') ? '' : newTourImage} 
+                onChange={e => { setNewTourImage(e.target.value); setNewTourFileName(''); }}
+                placeholder="Ou cole a URL da imagem aqui"
+                disabled={!!newTourFileName} 
             />
           </div>
-
-          {/* Input Imagem URL */}
-          <div>
-            <label className="sub block mb-1">URL da Imagem</label>
-            <input
-              className={`${inputStyle} w-80`}
-              placeholder="URL da Imagem (Opcional)"
-              value={newTourImage}
-              onChange={(e) => setNewTourImage(e.target.value)}
-            />
-          </div>
+          {/* REMOVIDO CAMPO DATA */}
 
           {/* Input Qtd. Grupos */}
           <div>
@@ -397,9 +460,9 @@ export default function Tournaments() {
                   {tour.status === 'draft' && <span className="text-sm font-normal bg-yellow-500 text-black px-2 py-0.5 rounded">DRAFT</span>}
               </div>
               <p className="text-sm text-white/70 mt-1">{tour.description || "Sem descrição."}</p>
-              {/* DATA DO TORNEIO */}
+              {/* DATA DE REGISTRO (Agora é automática) */}
               <p className="text-xs text-white/60 mt-1">
-                  Data: {tour.date || "N/A"}
+                  Criado em: {tour.date || "N/A"}
               </p>
               <p className="text-xs text-white/50 mt-1">
                   Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup}
@@ -422,9 +485,9 @@ export default function Tournaments() {
               {/* Botão Editar (Apenas Draft) */}
               <button 
                   title="Editar Detalhes"
-                  onClick={() => setEditing(tour)}
+                  onClick={() => openEdit(tour)}
                   disabled={tour.status !== 'draft'}
-                  className={`p-2 rounded-lg transition text-black ${tour.status === 'draft' ? 'bg-yellow-400 hover:bg-yellow-300' : 'bg-gray-500 cursor-not-allowed'}`}
+                  className={`p-2 rounded-lg transition text-yellow-400/80 hover:bg-white/10 ${tour.status !== 'draft' ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                   <Edit3 size={18} />
               </button>
@@ -477,6 +540,9 @@ export default function Tournaments() {
             <h2 className="text-2xl font-bold text-yellow-400 mb-4">
               Editar {editing.name} (Draft)
             </h2>
+
+            {/* CAMPO NOME COM LABEL */}
+            <label className="sub block mb-1 text-white/80 text-left">Nome</label>
             <input
               type="text"
               placeholder="Nome"
@@ -484,6 +550,9 @@ export default function Tournaments() {
               onChange={(e) => setEditing({...editing, name: e.target.value})}
               className={`w-full ${inputStyle} mb-3`}
             />
+
+            {/* CAMPO DESCRIÇÃO COM LABEL */}
+            <label className="sub block mb-1 text-white/80 text-left">Descrição</label>
             {/* Textarea com estilo de input */}
             <textarea
               placeholder="Descrição"
@@ -492,41 +561,75 @@ export default function Tournaments() {
               className={`w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white mb-3`}
               rows={3}
             />
-            <input
-              type="text"
-              placeholder="Data"
-              value={editing.date || ""}
-              onChange={(e) => setEditing({...editing, date: e.target.value})}
-              className={`w-full ${inputStyle} mb-3`}
-            />
-             <input
-              type="text"
-              placeholder="URL da Imagem"
-              value={editing.image || ""}
-              onChange={(e) => setEditing({...editing, image: e.target.value})}
-              className={`w-full ${inputStyle} mb-3`}
-            />
-            <div className="flex gap-4 mb-4">
-              <input
-                  type="number"
-                  min="1"
-                  placeholder="Qtd. Grupos"
-                  value={editing.groupCount}
-                  onChange={(e) => setEditing({...editing, groupCount: Number(e.target.value)})}
-                  className={`w-full ${inputStyle}`}
+
+            {/* CAMPO IMAGEM/UPLOAD COM LABEL */}
+            <div className="text-left w-full mb-3">
+                <label className="sub block mb-1 text-white/80">Imagem do Robô (Upload ou URL, máx: 1MB)</label>
+                <div className="flex items-center gap-2">
+                    <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={(e) => handleFileUpload(e, setEditImage, setEditTourFileName)} 
+                        className="hidden" 
+                        id="edit-tour-file-upload"
+                        // Desabilita o upload se for uma URL e nenhum novo arquivo foi selecionado
+                        disabled={editImage.length > 0 && !editImage.startsWith('data:')}
+                    />
+                    <label 
+                        htmlFor="edit-tour-file-upload" 
+                        className={`cursor-pointer px-4 py-2 rounded-xl w-full bg-white/5 border border-white/10 text-white hover:bg-white/10 transition flex items-center justify-center gap-2 flex-grow 
+                            ${editTourFileName || (editImage.length > 0 && editImage.startsWith('data:')) ? 'text-green-400 border-green-400/30' : ''}
+                            ${editImage.length > 0 && !editImage.startsWith('data:') && !editTourFileName ? 'opacity-50 cursor-not-allowed' : ''}`
+                        }
+                    >
+                        <Upload size={18} />
+                        {editTourFileName || (editImage && editImage.startsWith('data:')) ? 
+                            `Arquivo: ${editTourFileName || 'Base64 (' + Math.ceil(editImage.length/1024) + 'KB)'}` :
+                            "Upload da Imagem (máx: 1MB)"
+                        }
+                    </label>
+                </div>
+                {/* Campo para inserir URL (se não for Base64) */}
+                <input 
+                    type="text"
+                    placeholder="Ou cole a URL da imagem aqui"
+                    // Mostra a URL apenas se não for uma imagem em Base64
+                    value={editImage && editImage.startsWith('data:') ? '' : editImage} 
+                    onChange={(e) => { setEditImage(e.target.value); setEditTourFileName(''); }}
+                    className={inputStyle + ' w-full mt-2'}
+                    disabled={!!editTourFileName} // Desabilita se um arquivo foi carregado
                 />
-              <input
-                type="number"
-                min="1"
-                placeholder="Classificados"
-                value={editing.advancePerGroup}
-                onChange={(e) => setEditing({...editing, advancePerGroup: Number(e.target.value)})}
-                className={`w-full ${inputStyle}`}
-              />
             </div>
+            
+            {/* CAMPOS GRUPO E CLASSIFICADOS COM LABELS */}
+            <div className="flex gap-4 mb-4">
+              <div className="flex-1">
+                <label className="sub block mb-1 text-white/80 text-left">Qtd. Grupos</label>
+                <input
+                    type="number"
+                    min="1"
+                    placeholder="Qtd. Grupos"
+                    value={editing.groupCount}
+                    onChange={(e) => setEditing({...editing, groupCount: Number(e.target.value)})}
+                    className={`${inputStyle} w-full`}
+                />
+              </div>
+              <div className="flex-1">
+                <label className="sub block mb-1 text-white/80 text-left">Classificados por Grupo</label>
+                <input
+                    type="number"
+                    min="1"
+                    placeholder="Classificados"
+                    value={editing.advancePerGroup}
+                    onChange={(e) => setEditing({...editing, advancePerGroup: Number(e.target.value)})}
+                    className={`${inputStyle} w-full`}
+                />
+              </div>
+            </div>
+            
             <div className="flex justify-between mt-4">
               <button
-                onClick={() => setEditing(null)}
+                onClick={() => { setEditing(null); setEditImage(editing.image || ""); setEditTourFileName(""); }}
                 className="px-4 py-2 bg-gray-600 rounded-lg hover:opacity-80"
               >
                 Cancelar

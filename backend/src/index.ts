@@ -69,7 +69,7 @@ async function setupDatabase() {
         id VARCHAR(255) PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         team VARCHAR(255),
-        image VARCHAR(255),
+        image TEXT,
         score INT DEFAULT 0
     );
   `);
@@ -1075,14 +1075,20 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
         }
   }
 
-  // 6. Determina a próxima partida e atualiza a configuração (se nenhuma geração ocorreu)
-  const next = state.matches.find(x => !x.finished && x.tournamentId === state.tournamentId);
-  if (next) setCurrentMatch(next.id);
-  else {
+  // 6. ENFORÇA SELEÇÃO MANUAL: 
+  // Limpa o currentMatchId e, se o torneio acabou, define o status como finished.
+  const tournamentMatches = state.matches.filter(x => x.tournamentId === currentMatchInState.tournamentId);
+  const allFinished = tournamentMatches.every(x => x.finished);
+
+  if (allFinished) {
     state.currentMatchId = null;
     state.mainStatus = "finished";
-    saveConfigAndBroadcast("UPDATE_STATE", { state });
+  } else {
+    // Garante que o ID da partida recém-finalizada não está mais definido como current.
+    state.currentMatchId = null;
   }
+  
+  saveConfigAndBroadcast("UPDATE_STATE", { state });
 }
 
 /**
@@ -1115,6 +1121,89 @@ async function insertMatches(matches: Match[]) {
 
   await Promise.all(matchPromises);
   await loadStateFromDBAndBroadcast();
+  
+  // REMOVIDO: Bloco que definia a próxima luta automaticamente, garantindo o controle manual.
+  // const first = state.matches.find(m => !m.finished && m.tournamentId === state.tournamentId);
+  // setCurrentMatch(first?.id || null);
+  // saveConfigAndBroadcast("UPDATE_STATE", { state });
+}
+
+
+/* ------------------ GERAÇÃO PRINCIPAL - Atualizada para gerenciar torneios ------------------ */
+
+async function finalizeActiveTournament() {
+  if (!dbClient || !state.tournamentId) return;
+
+  await dbClient.query(
+    `UPDATE tournaments SET status = $1 WHERE id = $2`,
+    ['finished', state.tournamentId]
+  );
+  
+  // Limpa a referência do torneio ativo, mas mantém as configs
+  await dbClient.query(`UPDATE arena_config SET active_tournament_id = NULL WHERE id = 1`);
+  state.tournamentId = null;
+  state.currentMatchId = null;
+
+  await loadStateFromDBAndBroadcast();
+}
+
+// ROTA ATUALIZADA: Ativa torneio e gera matches se for DRAFT
+async function activateTournament(tournamentId: string) {
+    if (!dbClient) return { ok: false, error: "DB client not initialized" };
+    
+    const tournament = state.tournaments.find(t => t.id === tournamentId);
+    if (!tournament) return { ok: false, error: "Torneio não encontrado." };
+
+    // 1. Finaliza o torneio ativo atual (se houver)
+    if (state.tournamentId && state.tournamentId !== tournamentId) {
+        await dbClient.query(
+            `UPDATE tournaments SET status = $1 WHERE id = $2`,
+            ['finished', state.tournamentId]
+        );
+    }
+    
+    // 2. Se for DRAFT, gera os matches iniciais com base nos participantes
+    if (tournament.status === 'draft') {
+        const participatingRobots = tournament.participatingRobots || [];
+
+        if (participatingRobots.length < 2) {
+             return { ok: false, error: "O torneio precisa de no mínimo 2 robôs para gerar o chaveamento." };
+        }
+        
+        // Limpa partidas antigas (caso tenha havido tentativas de geração)
+        await dbClient.query("DELETE FROM matches WHERE tournament_id = $1", [tournamentId]);
+        
+        // Define as configurações no estado global
+        (state as any).advancePerGroup = tournament.advancePerGroup;
+        (state as any).groupCount = tournament.groupCount;
+        state.tournamentId = tournamentId; // Define como ativo para o contexto de `generateGroupMatches`
+
+        let groups = divideGroupsDynamic(participatingRobots, tournament.groupCount, 4); // 4 é um valor padrão aqui
+        if (groups.length === 1) groups = [groups[0]];
+
+        const groupMatches = generateGroupMatches(groups);
+        // Note: insertMatches usa o state.tournamentId que acabamos de definir, passando o ID correto para o DB
+        await insertMatches(groupMatches);
+    }
+    
+    // 3. Define o novo torneio como ativo e com status 'active'
+    await dbClient.query(
+        `UPDATE arena_config SET active_tournament_id = $1, advance_per_group = $2, group_count = $3 WHERE id = 1`,
+        [tournamentId, tournament.advancePerGroup, tournament.groupCount]
+    );
+    await dbClient.query(
+        `UPDATE tournaments SET status = $1 WHERE id = $2`,
+        ['active', tournamentId]
+    );
+
+    // 4. Recarrega o estado completo e transmite
+    await loadStateFromDBAndBroadcast();
+    
+    // 5. currentMatchId é mantido como NULL após insertMatches
+    
+    // Garante que o estado final seja salvo e transmitido
+    saveConfigAndBroadcast("UPDATE_STATE", { state });
+    return { ok: true, message: `Torneio "${tournament.name}" ativado e chaveamento gerado.` };
 }
 
 
@@ -1372,16 +1461,17 @@ app.post("/db/load", async (_req, res) => {
 
 // POST: Criar Torneio (Draft)
 app.post("/tournaments", async (req, res) => {
-    const { name, description, date, image, groupCount = 2, advancePerGroup = 2 } = req.body;
+    const { name, description, image, groupCount = 2, advancePerGroup = 2 } = req.body;
     if (!dbClient || !name) return res.status(400).json({ error: "Nome do torneio é obrigatório." });
 
     const newTournamentId = uuidv4();
+    const currentDate = new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
     
     try {
         await dbClient.query(
             `INSERT INTO tournaments (id, name, description, date, image, status, advance_per_group, group_count, participating_robot_ids) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [newTournamentId, name, description || null, date || null, image || null, 'draft', advancePerGroup, groupCount, '[]']
+            [newTournamentId, name, description || null, currentDate || null, image || null, 'draft', advancePerGroup, groupCount, '[]']
         );
         await loadStateFromDBAndBroadcast();
         res.json({ ok: true, message: `Torneio "${name}" criado com sucesso (Draft).` });
@@ -1393,7 +1483,7 @@ app.post("/tournaments", async (req, res) => {
 
 // PUT: Editar Detalhes do Torneio (Apenas Draft)
 app.put("/tournaments/:id", async (req, res) => {
-    const { name, description, date, image, groupCount, advancePerGroup } = req.body;
+    const { name, description, image, groupCount, advancePerGroup } = req.body;
     const tournamentId = req.params.id;
 
     if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
@@ -1413,10 +1503,6 @@ app.put("/tournaments/:id", async (req, res) => {
     if (description !== undefined) {
         updates.push(`description = $${paramIndex++}`);
         values.push(description || null);
-    }
-    if (date !== undefined) {
-        updates.push(`date = $${paramIndex++}`);
-        values.push(date || null);
     }
     if (image !== undefined) {
         updates.push(`image = $${paramIndex++}`);
