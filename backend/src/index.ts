@@ -521,7 +521,7 @@ function startMatch(id: string) {
   resetTimers();
   state.mainStatus = "idle";
   state.winner = null;
-
+  broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_RUNNING" }); 
   saveConfigAndBroadcast("UPDATE_STATE", { state });
 }
 
@@ -1888,6 +1888,7 @@ wss.on("connection", (ws) => {
           state.recoveryActive = false;
           state.recoveryPaused = false;
           
+          broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_RUNNING" });
           startMainTimer(180); // Esta função agora envia STATE_FIGHT_RUNNING e faz o save
 
           // NOTA: 'startMainTimer' não deve ter 'broadcastAndSave' aqui; a lógica está DENTRO dela.
@@ -1910,6 +1911,7 @@ wss.on("connection", (ws) => {
           state.recoveryTimer = 0;
           state.recoveryActive = false;
           state.recoveryPaused = false;
+          broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_RUNNING" });
           
           if (state.mainTimer > 0) {
             startMainTimer(state.mainTimer); // Esta função agora envia STATE_FIGHT_RUNNING
@@ -1931,17 +1933,20 @@ wss.on("connection", (ws) => {
 
         case "START_RECOVERY":
           // startRecoveryTimer já envia STATE_RECOVERY_ACTIVE e faz o save
+          broadcastOnly("LED_COMMAND", { command: "STATE_RECOVERY_ACTIVE" });
           startRecoveryTimer(payload?.seconds ?? 10);
           break;
 
         case "PAUSE_RECOVERY":
           state.recoveryPaused = true;
+          broadcastOnly("LED_COMMAND", { command: "STATE_RECOVERY_ACTIVE" });
           saveConfigAndBroadcast("UPDATE_STATE", { state });
           break;
 
         case "RESUME_RECOVERY":
           if (state.recoveryTimer > 0) {
             state.recoveryPaused = false;
+            broadcastOnly("LED_COMMAND", { command: "STATE_RECOVERY_ACTIVE" });
             startRecoveryTimer(state.recoveryTimer, true); 
           }
           break;
@@ -1954,16 +1959,15 @@ wss.on("connection", (ws) => {
           state.recoveryPaused = false;
           
           // Volta ao estado IDLE NORMAL
-          broadcastOnly("LED_COMMAND", { command: "STATE_IDLE_NORMAL" });
+          broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_RUNNING" });
           saveConfigAndBroadcast("UPDATE_STATE", { state });
           break;
 
 
         case "END_MATCH":
+          broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_ENDED" });
           endMatchNow(); // Esta função agora envia STATE_FIGHT_ENDED
           break;
-          
-        case "LIGHT_TOGGLE": // NOVO: Lógica de Botões Físicos
           const targetSide = payload?.side; // 'GREEN', 'BLUE', ou 'NORMAL'
           
           if (state.mainStatus === "running" || state.recoveryActive) {
