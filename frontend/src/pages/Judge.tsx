@@ -72,7 +72,7 @@ if (current.finished) {
       <img
         src={robot.image}
         alt={robot.name}
-        className={`object-cover w-full h-full`}
+        className={`object-contain w-full h-full`}
       />
     );
 

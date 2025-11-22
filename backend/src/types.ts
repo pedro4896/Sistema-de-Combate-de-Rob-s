@@ -6,34 +6,36 @@ export interface Robot {
   score?: number;
 }
 
-export type Phase = "groups" | "elimination";
+export type Phase = "groups" | "elimination" | "repechage"; // ADICIONADO "repechage"
 
 export interface Tournament { // ATUALIZADO
   id: string;
   name: string;
-  description?: string; // NOVO
-  date?: string; // NOVO
-  image?: string; // NOVO
+  description?: string; 
+  date?: string; 
+  image?: string; 
   status: "draft" | "active" | "finished";
   advancePerGroup: number;
   groupCount: number;
-  participatingRobotIds?: string[]; // NOVO
-  participatingRobots?: Robot[]; // NOVO
+  participatingRobotIds?: string[]; 
+  participatingRobots?: Robot[]; 
+  repechageRobotIds?: string[]; // NOVO
+  repechageWinner?: Robot | null; // NOVO
 }
 
 export interface Match {
   id: string;
-  tournamentId?: string; // NOVO: ID do torneio
-  phase: Phase;           // "groups" ou "elimination"
-  round: number;          // Nº da rodada dentro da phase (1,2,3...)
-  group?: string | null;  // "A","B","C"... quando phase="groups"
+  tournamentId?: string; 
+  phase: Phase;           
+  round: number;          
+  group?: string | null;  
   robotA: Robot | null;
   robotB: Robot | null;
   scoreA: number;
   scoreB: number;
   winner: Robot | null;
   finished: boolean;
-  type: "normal" | "KO" | "WO";  // normal, k.o ou w.o
+  type: "normal" | "KO" | "WO"; 
 }
 
 export interface RankingItem {
@@ -48,12 +50,12 @@ export interface GroupTableItem {
   robotId: string;
   name: string;
   team?: string;
-  pts: number;     // Pontos totais do juiz
-  wins: number;    // Vitórias
-  draws: number;   // Empates
-  losses: number;  // Derrotas
-  ko: number;      // Vitórias por KO
-  wo: number;      // Vitórias por WO
+  pts: number;    
+  wins: number;   
+  draws: number;  
+  losses: number; 
+  ko: number;     
+  wo: number;     
 }
 
 

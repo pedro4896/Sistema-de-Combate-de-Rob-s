@@ -1,27 +1,31 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api";
+import { api } from "../api"; // Assumindo que o arquivo '../api.ts' foi atualizado com as novas funções
 import { onMessage } from "../ws";
 import { motion } from "framer-motion";
 import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play, X, Upload } from "lucide-react";
-import toast from "react-hot-toast"; // Assumindo que você tem um provider para react-hot-toast
+import toast from "react-hot-toast"; 
 
+// TIPAGEM ATUALIZADA (com base nas modificações anteriores)
 type Robot = { id: string; name: string; team: string; };
 type Tournament = { 
   id: string; 
   name: string; 
   description?: string; 
-  date?: string; // Mantido para exibição, mas preenchido pelo backend
+  date?: string; 
   image?: string;
   status: 'draft' | 'active' | 'finished';
   advancePerGroup: number; 
   groupCount: number; 
   participatingRobotIds?: string[];
   participatingRobots?: Robot[];
+  repechageRobotIds?: string[]; // NOVO
+  repechageWinner?: Robot | null; // NOVO
 };
 type ArenaState = {
     robots: Robot[];
     tournaments: Tournament[];
-    tournamentId: string | null; // Torneio ativo atual
+    tournamentId: string | null; 
+    matches: any[]; // Adicionado para checar se a repescagem já foi gerada
     // ... outros campos
 };
 
@@ -73,7 +77,7 @@ const CustomAlertDialog = ({ open, title, description, action, onClose }: {
 };
 
 export default function Tournaments() {
-  const [state, setState] = useState<ArenaState>({ robots: [], tournaments: [], tournamentId: null });
+  const [state, setState] = useState<ArenaState>({ robots: [], tournaments: [], tournamentId: null, matches: [] });
   const [newTourName, setNewTourName] = useState("");
   const [newTourDesc, setNewTourDesc] = useState("");
   const [newTourImage, setNewTourImage] = useState("");
@@ -81,22 +85,24 @@ export default function Tournaments() {
   const [newAdvancePerGroup, setNewAdvancePerGroup] = useState(2);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Tournament | null>(null);
-  // NOVO STATE para a imagem no modal de edição
   const [editImage, setEditImage] = useState("");
+  const [newTourFileName, setNewTourFileName] = useState("");
+  const [editTourFileName, setEditTourFileName] = useState("");
   
   const [managingRobots, setManagingRobots] = useState<Tournament | null>(null);
   const [selectedRobots, setSelectedRobots] = useState<string[]>([]);
-
-  // NOVOS STATES: para gerenciar o nome do arquivo selecionado (UX)
-  const [newTourFileName, setNewTourFileName] = useState("");
-  const [editTourFileName, setEditTourFileName] = useState("");
+  
+  // NOVO ESTADO PARA REPESCAGEM
+  const [managingRepechage, setManagingRepechage] = useState<Tournament | null>(null);
+  const [selectedRepechageRobots, setSelectedRepechageRobots] = useState<string[]>([]);
+  // FIM NOVO ESTADO REPESCAGEM
 
   // NOVO ESTADO PARA GERENCIAR O MODAL DE CONFIRMAÇÃO
   const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialog>({
-      open: false,
-      title: "",
-      description: "",
-      action: () => {},
+    open: false,
+    title: "",
+    description: "",
+    action: () => {},
   });
   
   const inputStyle = "px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white";
@@ -134,10 +140,20 @@ export default function Tournaments() {
 
   function refresh(s: any) { 
     setState(s);
+    
+    // Atualiza selectedRobots (participantes gerais) se o modal estiver aberto
     if (managingRobots) {
         const currentTour = s.tournaments.find((t: Tournament) => t.id === managingRobots.id);
         if (currentTour) {
-             setSelectedRobots(currentTour.participatingRobotIds || []);
+            setSelectedRobots(currentTour.participatingRobotIds || []);
+        }
+    }
+    
+    // NOVO: Atualiza selectedRepechageRobots se o modal de repescagem estiver aberto
+    if (managingRepechage) {
+        const currentTour = s.tournaments.find((t: Tournament) => t.id === managingRepechage.id);
+        if (currentTour) {
+            setSelectedRepechageRobots(currentTour.repechageRobotIds || []);
         }
     }
   }
@@ -147,6 +163,7 @@ export default function Tournaments() {
     return onMessage((m: any) => m.type === "UPDATE_STATE" && refresh(m.payload.state)); 
   }, []);
 
+  // --- HANDLERS DE TORNEIOS (CRUD e Ações Principais) ---
   const handleCreateTournament = async () => {
     if (!newTourName.trim()) return toast.error("O nome é obrigatório!", { duration: 3000 });
 
@@ -156,7 +173,6 @@ export default function Tournaments() {
       body: {
         name: newTourName,
         description: newTourDesc.trim() || null,
-        // REMOVIDO: newTourDate, pois é gerado no backend
         image: newTourImage.trim() || null,
         groupCount: newGroupCount,
         advancePerGroup: newAdvancePerGroup,
@@ -168,9 +184,9 @@ export default function Tournaments() {
       setNewTourName("");
       setNewTourDesc("");
       setNewTourImage("");
-      setNewTourFileName(""); // Limpa o nome do arquivo
-      setNewGroupCount(2); // Opcional: resetar para o padrão
-      setNewAdvancePerGroup(2); // Opcional: resetar para o padrão
+      setNewTourFileName("");
+      setNewGroupCount(2); 
+      setNewAdvancePerGroup(2); 
     } else {
       toast.error(result.error || "Falha ao criar o torneio.", { duration: 3000 });
     }
@@ -185,8 +201,7 @@ export default function Tournaments() {
         body: {
           name: editing.name,
           description: editing.description?.trim() || null,
-          // REMOVIDO: o campo date é ignorado no backend
-          image: editImage.trim() || null, // Usa o estado de edição atualizado (URL ou Base64)
+          image: editImage.trim() || null, 
           groupCount: editing.groupCount,
           advancePerGroup: editing.advancePerGroup,
         },
@@ -196,25 +211,24 @@ export default function Tournaments() {
         toast.success(`Torneio "${editing.name}" atualizado!`);
         setEditing(null);
         setEditImage("");
-        setEditTourFileName(""); // Limpa o nome do arquivo
+        setEditTourFileName("");
       } else {
         toast.error(result.error || "Falha ao atualizar o torneio.");
       }
   };
 
-  // Funções que agora usam o modal de confirmação
   const handleDeleteTournament = (id: string, name: string) => {
     setConfirmationDialog({
         open: true,
         title: `Deletar Torneio "${name}"`,
         description: `Esta ação não pode ser desfeita. Todas as partidas de "${name}" serão excluídas. Confirma?`,
         action: async () => {
-             const result = await api(`/tournaments/${id}`, { method: "DELETE" });
-             if (result.ok) {
-                 toast.success(result.message);
-             } else {
-                 toast.error(result.error || "Falha ao deletar o torneio.");
-             }
+              const result = await api(`/tournaments/${id}`, { method: "DELETE" });
+              if (result.ok) {
+                  toast.success(result.message);
+              } else {
+                  toast.error(result.error || "Falha ao deletar o torneio.");
+              }
         }
     });
   };
@@ -229,7 +243,7 @@ export default function Tournaments() {
     setConfirmationDialog({
         open: true,
         title: `Ativar Torneio "${name}"`,
-        description: `Isto irá gerar o chaveamento e definir "${name}" como o torneio ATIVO. Você poderá continuar a edição das regras na página de chaveamento. Confirma a ativação?`,
+        description: `Isto irá gerar o chaveamento de GRUPOS e definir "${name}" como o torneio ATIVO. Confirma a ativação?`,
         action: async () => {
             const result = await api(`/tournaments/${id}/activate`, { method: "POST" });
             if (result.ok) {
@@ -257,7 +271,7 @@ export default function Tournaments() {
     });
   };
 
-  // --- Lógica de Gerenciamento de Robôs ---
+  // --- Lógica de Gerenciamento de Robôs (Participantes Gerais) ---
   const openRobotManager = (tournament: Tournament) => {
     if (tournament.status !== 'draft') {
         toast.error("Apenas torneios em status 'draft' podem ter os robôs gerenciados.");
@@ -267,7 +281,6 @@ export default function Tournaments() {
     setSelectedRobots(tournament.participatingRobotIds || []);
   };
   
-  // Abre modal de edição (ATUALIZADO para usar o estado de edição)
   const openEdit = (tournament: Tournament) => {
     setEditing(tournament);
     setEditImage(tournament.image || "");
@@ -277,8 +290,8 @@ export default function Tournaments() {
   const toggleRobotSelection = (robotId: string) => {
     setSelectedRobots(prev => 
       prev.includes(robotId) 
-        ? prev.filter(id => id !== robotId) 
-        : [...prev, robotId]
+      ? prev.filter(id => id !== robotId) 
+      : [...prev, robotId]
     );
   };
   
@@ -312,6 +325,76 @@ export default function Tournaments() {
     }
   };
 
+  // --- LÓGICA DE GERENCIAMENTO DE REPESCAGEM (NOVAS FUNÇÕES) ---
+  
+  const openRepechageManager = (tournament: Tournament) => {
+      setManagingRepechage(tournament);
+      // Carrega os robôs de repescagem existentes no estado local do modal
+      setSelectedRepechageRobots(tournament.repechageRobotIds || []);
+  };
+
+  const closeRepechageManager = () => {
+      setManagingRepechage(null);
+      setSelectedRepechageRobots([]);
+  };
+
+  const toggleRepechageRobotSelection = (robotId: string) => {
+      setSelectedRepechageRobots(prev => 
+          prev.includes(robotId) 
+              ? prev.filter(id => id !== robotId) 
+              : [...prev, robotId]
+      );
+  };
+    
+  const saveRepechageRobots = async () => {
+      if (!managingRepechage) return;
+      
+      setLoading(true);
+      const result = await api(`/tournaments/${managingRepechage.id}/set-repechage-robots`, {
+          method: "POST",
+          body: { robotIds: selectedRepechageRobots }
+      });
+      setLoading(false);
+
+      if (result.ok) {
+          toast.success(result.message);
+          // Não fecha o modal, apenas salva a lista
+      } else {
+          toast.error(result.error || "Falha ao salvar a lista de repescagem.");
+      }
+  };
+    
+  const generateRepechage = (id: string, name: string) => {
+      const currentTour = state.tournaments.find(t => t.id === id);
+      
+      if (!currentTour || (currentTour.repechageRobotIds?.length || 0) < 2) {
+          toast.error("Selecione e salve pelo menos 2 robôs para a repescagem antes de gerar o chaveamento.");
+          return;
+      }
+      
+      const repechageMatchesExist = state.matches.some(m => m.tournamentId === id && m.phase === 'repechage');
+      if (repechageMatchesExist) {
+          toast.error("O chaveamento da repescagem já foi gerado. Finalize as partidas existentes.");
+          return;
+      }
+
+      setConfirmationDialog({
+          open: true,
+          title: `Gerar Repescagem para "${name}"`,
+          description: `Isso irá gerar as partidas de eliminação para os ${currentTour.repechageRobotIds?.length} robôs selecionados. A Fase de Grupos deve estar completa. Confirma?`,
+          action: async () => {
+              const result = await api(`/tournaments/${id}/generate-repechage`, { method: "POST" });
+              if (result.ok) {
+                  toast.success(result.message);
+                  closeRepechageManager();
+              } else {
+                  toast.error(result.error || "Falha ao gerar o chaveamento da repescagem.");
+              }
+          }
+      });
+  };
+  // --- FIM LÓGICA DE REPESCAGEM ---
+
 
   return (
     <div className="p-8">
@@ -320,7 +403,7 @@ export default function Tournaments() {
       </h1>
       <hr className="mb-8 border-white/20" />
 
-      {/* MODAL DE CONFIRMAÇÃO REUTILIZÁVEL (Substitui window.confirm) */}
+      {/* MODAL DE CONFIRMAÇÃO REUTILIZÁVEL */}
       <CustomAlertDialog
           open={confirmationDialog.open}
           title={confirmationDialog.title}
@@ -356,7 +439,7 @@ export default function Tournaments() {
             />
           </div>
 
-          {/* Input Imagem URL/Upload (NOVO) */}
+          {/* Input Imagem URL/Upload */}
           <div className="w-96">
             <label className="sub block mb-1">Imagem do Torneio (Upload ou URL, máx: 1MB)</label>
             <div className="flex items-center gap-2">
@@ -382,7 +465,6 @@ export default function Tournaments() {
                     }
                 </label>
             </div>
-            {/* Campo para inserir URL (se não for Base64) */}
             <input 
                 type="text"
                 className={`${inputStyle} w-full mt-2`} 
@@ -392,7 +474,6 @@ export default function Tournaments() {
                 disabled={!!newTourFileName} 
             />
           </div>
-          {/* REMOVIDO CAMPO DATA */}
 
           {/* Input Qtd. Grupos */}
           <div>
@@ -408,7 +489,7 @@ export default function Tournaments() {
           </div>
 
           {/* Input Classificados */}
-           <div>
+            <div>
             <label className="sub block mb-1">Classificados</label>
             <input
               type="number"
@@ -460,7 +541,7 @@ export default function Tournaments() {
                   {tour.status === 'draft' && <span className="text-sm font-normal bg-yellow-500 text-black px-2 py-0.5 rounded">DRAFT</span>}
               </div>
               <p className="text-sm text-white/70 mt-1">{tour.description || "Sem descrição."}</p>
-              {/* DATA DE REGISTRO (Agora é automática) */}
+              {/* DATA DE REGISTRO */}
               <p className="text-xs text-white/60 mt-1">
                   Criado em: {tour.date || "N/A"}
               </p>
@@ -472,7 +553,7 @@ export default function Tournaments() {
             {/* Botões de Ação */}
             <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mt-3 md:mt-0 items-center justify-end flex-shrink-0 ml-4">
               
-              {/* Botão Gerenciar Robôs */}
+              {/* Botão Gerenciar Robôs (Participantes Gerais - Apenas Draft) */}
               <button 
                   title="Gerenciar Robôs"
                   onClick={() => openRobotManager(tour)}
@@ -491,6 +572,17 @@ export default function Tournaments() {
               >
                   <Edit3 size={18} />
               </button>
+
+              {/* Botão Gerenciar Repescagem (NOVO) */}
+              {(tour.status === 'draft' || tour.status === 'active') && (tour.participatingRobots?.length || 0) > 0 && (
+                  <button
+                      title="Gerenciar Repescagem"
+                      onClick={() => openRepechageManager(tour)}
+                      className="p-2 rounded-lg bg-purple-600 hover:bg-purple-500 transition text-white"
+                  >
+                      <Swords size={18} />
+                  </button>
+              )}
 
               {/* Botão Ativar/Gerar Chaveamento (Apenas Draft) */}
               {tour.status === 'draft' && (
@@ -553,7 +645,6 @@ export default function Tournaments() {
 
             {/* CAMPO DESCRIÇÃO COM LABEL */}
             <label className="sub block mb-1 text-white/80 text-left">Descrição</label>
-            {/* Textarea com estilo de input */}
             <textarea
               placeholder="Descrição"
               value={editing.description || ""}
@@ -572,13 +663,12 @@ export default function Tournaments() {
                         onChange={(e) => handleFileUpload(e, setEditImage, setEditTourFileName)} 
                         className="hidden" 
                         id="edit-tour-file-upload"
-                        // Desabilita o upload se for uma URL e nenhum novo arquivo foi selecionado
                         disabled={editImage.length > 0 && !editImage.startsWith('data:')}
                     />
                     <label 
                         htmlFor="edit-tour-file-upload" 
                         className={`cursor-pointer px-4 py-2 rounded-xl w-full bg-white/5 border border-white/10 text-white hover:bg-white/10 transition flex items-center justify-center gap-2 flex-grow 
-                            ${editTourFileName || (editImage.length > 0 && editImage.startsWith('data:')) ? 'text-green-400 border-green-400/30' : ''}
+                            ${editTourFileName || (editImage && editImage.startsWith('data:')) ? 'text-green-400 border-green-400/30' : ''}
                             ${editImage.length > 0 && !editImage.startsWith('data:') && !editTourFileName ? 'opacity-50 cursor-not-allowed' : ''}`
                         }
                     >
@@ -593,11 +683,10 @@ export default function Tournaments() {
                 <input 
                     type="text"
                     placeholder="Ou cole a URL da imagem aqui"
-                    // Mostra a URL apenas se não for uma imagem em Base64
                     value={editImage && editImage.startsWith('data:') ? '' : editImage} 
                     onChange={(e) => { setEditImage(e.target.value); setEditTourFileName(''); }}
                     className={inputStyle + ' w-full mt-2'}
-                    disabled={!!editTourFileName} // Desabilita se um arquivo foi carregado
+                    disabled={!!editTourFileName} 
                 />
             </div>
             
@@ -645,7 +734,7 @@ export default function Tournaments() {
         </div>
       )}
 
-      {/* === MODAL DE GERENCIAMENTO DE ROBÔS === */}
+      {/* === MODAL DE GERENCIAMENTO DE ROBÔS (Participantes Gerais) === */}
       {managingRobots && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-lg shadow-2xl border border-indigo-400/30">
@@ -653,8 +742,8 @@ export default function Tournaments() {
               Robôs para "{managingRobots.name}"
             </h2>
             <div className="flex justify-start space-x-3 mb-3">
-                 <button onClick={selectAllRobots} className="text-xs bg-indigo-500/50 hover:bg-indigo-500/70 p-1 rounded">Selecionar Todos</button>
-                 <button onClick={deselectAllRobots} className="text-xs bg-gray-500/50 hover:bg-gray-500/70 p-1 rounded">Limpar Seleção</button>
+                <button onClick={selectAllRobots} className="text-xs bg-indigo-500/50 hover:bg-indigo-500/70 p-1 rounded">Selecionar Todos</button>
+                <button onClick={deselectAllRobots} className="text-xs bg-gray-500/50 hover:bg-gray-500/70 p-1 rounded">Limpar Seleção</button>
             </div>
             <div className="max-h-80 overflow-y-auto space-y-2 bg-black/10 p-3 rounded">
                 {state.robots.map(robot => (
@@ -687,6 +776,95 @@ export default function Tournaments() {
                 className={`px-4 py-2 text-black font-bold rounded-lg transition ${selectedRobots.length < 2 ? 'bg-gray-500 cursor-not-allowed' : 'bg-indigo-400 hover:bg-indigo-300'}`}
               >
                 Salvar Participantes ({selectedRobots.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === NOVO MODAL DE GERENCIAMENTO DE REPESCAGEM === */}
+      {managingRepechage && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-lg shadow-2xl border border-purple-400/30">
+            <h2 className="text-2xl font-bold text-purple-400 mb-4">
+              Repescagem para "{managingRepechage.name}"
+            </h2>
+
+            <div className="space-y-6">
+                
+              {/* SEÇÃO 1: SELEÇÃO DE ROBÔS */}
+              <div>
+                  <h3 className="text-lg font-bold text-white mb-2 text-left">1. Selecionar Participantes</h3>
+                  <p className="text-sm text-white/70 mb-3 text-left">Escolha os robôs que competirão nesta fase eliminatória adicional (mínimo 2). Apenas participantes do torneio principal são listados.</p>
+                  
+                  {/* Botões de Ação do Modal */}
+                  <div className="flex justify-start space-x-3 mb-3">
+                      <button onClick={() => setSelectedRepechageRobots(managingRepechage.participatingRobotIds || [])} className="text-xs bg-purple-500/50 hover:bg-purple-500/70 p-1 rounded">Selecionar Todos (Participantes)</button>
+                      <button onClick={() => setSelectedRepechageRobots([])} className="text-xs bg-gray-500/50 hover:bg-gray-500/70 p-1 rounded">Limpar Seleção</button>
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-2 bg-black/10 p-3 rounded">
+                      {/* Filtra apenas robôs que estão na lista principal de participantes */}
+                      {state.robots
+                          .filter(r => managingRepechage.participatingRobotIds?.includes(r.id))
+                          .map(robot => (
+                          <div 
+                              key={robot.id} 
+                              className={`flex items-center justify-between p-2 rounded cursor-pointer transition ${selectedRepechageRobots.includes(robot.id) ? 'bg-purple-600/50' : 'bg-white/5 hover:bg-white/10'}`}
+                              onClick={() => toggleRepechageRobotSelection(robot.id)}
+                          >
+                              <span>{robot.name} ({robot.team || 'S/E'})</span>
+                              {selectedRepechageRobots.includes(robot.id) ? 
+                                  <CheckCircle size={18} className="text-green-400" /> : 
+                                  <Plus size={18} className="text-gray-400" />
+                              }
+                          </div>
+                      ))}
+                      {(managingRepechage.participatingRobots?.length || 0) === 0 && <p className="text-center text-white/50">Nenhum robô foi adicionado ao torneio principal.</p>}
+                  </div>
+                  
+                  <p className="text-sm text-white/70 mt-3">Robôs na Repescagem: {selectedRepechageRobots.length}</p>
+                  
+                  <button
+                      onClick={saveRepechageRobots}
+                      className={`w-full mt-3 px-4 py-2 text-black font-bold rounded-lg transition ${selectedRepechageRobots.length < 2 ? 'bg-gray-500 cursor-not-allowed' : 'bg-purple-400 hover:bg-purple-300'}`}
+                      disabled={loading}
+                  >
+                      {loading ? "Salvando..." : `Salvar Seleção de Repescagem (${selectedRepechageRobots.length})`}
+                  </button>
+              </div>
+
+              {/* SEÇÃO 2: GERAR CHAVEAMENTO */}
+              <div className="border-t border-white/20 pt-4">
+                  <h3 className="text-lg font-bold text-white mb-2 text-left">2. Gerar Partidas</h3>
+                  <p className="text-sm text-white/70 mb-4 text-left">
+                      {state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
+                          <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> O chaveamento da repescagem JÁ FOI GERADO.</span> :
+                          "Gere o chaveamento depois que a Fase de Grupos terminar. Os robôs selecionados acima serão usados."
+                      }
+                  </p>
+                  <button
+                      onClick={() => generateRepechage(managingRepechage.id, managingRepechage.name)}
+                      className={`w-full px-4 py-2 text-black font-bold rounded-lg transition flex items-center justify-center gap-2 ${
+                          (managingRepechage.repechageRobotIds?.length || 0) < 2 || state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id)
+                          ? 'bg-gray-500 cursor-not-allowed' 
+                          : 'bg-green-600 hover:bg-green-500'
+                      }`}
+                      disabled={(managingRepechage.repechageRobotIds?.length || 0) < 2 || loading || state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id)}
+                  >
+                      <Play size={18} />
+                      Gerar Chaveamento de Repescagem
+                  </button>
+              </div>
+              
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={closeRepechageManager}
+                className="px-4 py-2 bg-gray-600 rounded-lg hover:opacity-80"
+              >
+                Fechar
               </button>
             </div>
           </div>

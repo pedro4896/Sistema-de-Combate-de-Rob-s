@@ -7,21 +7,21 @@
 const size_t WS_RX_DOC_SIZE = 512;
 
 // ========= REDE / BACKEND =========
-const char *ssid = "DIGITAL-ARTHUR";
-const char *password = "valdeci102";
-const char *arena_host = "192.168.1.112";
+const char *ssid = "teste";
+const char *password = "testeesp32";
+const char *arena_host = "172.26.132.21";
 const int arena_port = 8080;
 const char *websocket_path = "/";
 
 // ========= FITA LED =========
 #define LED_PIN 4  // D2 (GPIO4)
-#define NUM_LEDS 300
+#define NUM_LEDS 600
 // Note: CRGB leds[300] consome ~900 bytes de RAM.
 #define NUM_LEDS_SIDE (NUM_LEDS / 2)
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
-#define BASE_BRIGHTNESS 255  // brilho padrão
-#define WHITE_LIMIT 70      // limite de brilho só para o branco (evita queda de tensão)
+#define BASE_BRIGHTNESS 170  // brilho padrão
+#define WHITE_LIMIT 25      // limite de brilho só para o branco (evita queda de tensão)
 
 CRGB leds[NUM_LEDS];
 
