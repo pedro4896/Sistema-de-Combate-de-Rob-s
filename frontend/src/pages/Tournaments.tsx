@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Plus, Edit3, Trash2, Swords, CheckCircle, Bot, Play, X, Upload } from "lucide-react";
 import toast from "react-hot-toast"; 
 
-// TIPAGEM ATUALIZADA (com base nas modificações anteriores)
+// TIPAGEM ATUALIZADA
 type Robot = { id: string; name: string; team: string; };
 type Tournament = { 
   id: string; 
@@ -18,14 +18,15 @@ type Tournament = {
   groupCount: number; 
   participatingRobotIds?: string[];
   participatingRobots?: Robot[];
-  repechageRobotIds?: string[]; // NOVO
-  repechageWinner?: Robot | null; // NOVO
+  repechageRobotIds?: string[];
+  repechageWinner?: Robot | null;
+  repechageAdvanceCount: number; // NOVO CAMPO
 };
 type ArenaState = {
     robots: Robot[];
     tournaments: Tournament[];
     tournamentId: string | null; 
-    matches: any[]; // Adicionado para checar se a repescagem já foi gerada
+    matches: any[];
     // ... outros campos
 };
 
@@ -83,6 +84,7 @@ export default function Tournaments() {
   const [newTourImage, setNewTourImage] = useState("");
   const [newGroupCount, setNewGroupCount] = useState(2);
   const [newAdvancePerGroup, setNewAdvancePerGroup] = useState(2);
+  const [newRepechageAdvanceCount, setNewRepechageAdvanceCount] = useState(1); // NOVO ESTADO
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Tournament | null>(null);
   const [editImage, setEditImage] = useState("");
@@ -176,6 +178,7 @@ export default function Tournaments() {
         image: newTourImage.trim() || null,
         groupCount: newGroupCount,
         advancePerGroup: newAdvancePerGroup,
+        repechageAdvanceCount: newRepechageAdvanceCount, // NOVO: Campo adicionado
       },
     });
 
@@ -187,6 +190,7 @@ export default function Tournaments() {
       setNewTourFileName("");
       setNewGroupCount(2); 
       setNewAdvancePerGroup(2); 
+      setNewRepechageAdvanceCount(1); // Resetar para o valor padrão
     } else {
       toast.error(result.error || "Falha ao criar o torneio.", { duration: 3000 });
     }
@@ -204,6 +208,7 @@ export default function Tournaments() {
           image: editImage.trim() || null, 
           groupCount: editing.groupCount,
           advancePerGroup: editing.advancePerGroup,
+          repechageAdvanceCount: editing.repechageAdvanceCount, // NOVO: Campo adicionado
         },
       });
 
@@ -285,6 +290,11 @@ export default function Tournaments() {
     setEditing(tournament);
     setEditImage(tournament.image || "");
     setEditTourFileName("");
+    // NOVO: Garantir que o campo seja preenchido no estado de edição
+    setEditing(prev => ({ 
+        ...prev!, 
+        repechageAdvanceCount: tournament.repechageAdvanceCount || 1 // Inicializa com o valor atual ou 1
+    }));
   };
 
   const toggleRobotSelection = (robotId: string) => {
@@ -488,9 +498,9 @@ export default function Tournaments() {
             />
           </div>
 
-          {/* Input Classificados */}
+          {/* Input Classificados (Grupos) */}
             <div>
-            <label className="sub block mb-1">Classificados</label>
+            <label className="sub block mb-1">Classificados (Grupos)</label>
             <input
               type="number"
               min="1"
@@ -498,6 +508,19 @@ export default function Tournaments() {
               placeholder="2"
               value={newAdvancePerGroup}
               onChange={(e) => setNewAdvancePerGroup(Number(e.target.value))}
+            />
+          </div>
+            
+          {/* NOVO: Input Classificados (Repescagem) */}
+          <div>
+            <label className="sub block mb-1">Classificados (Repescagem)</label>
+            <input
+              type="number"
+              min="1"
+              className={`${inputStyle} w-48`}
+              placeholder="1"
+              value={newRepechageAdvanceCount}
+              onChange={(e) => setNewRepechageAdvanceCount(Number(e.target.value))}
             />
           </div>
 
@@ -546,7 +569,7 @@ export default function Tournaments() {
                   Criado em: {tour.date || "N/A"}
               </p>
               <p className="text-xs text-white/50 mt-1">
-                  Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup}
+                  Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup} (Grupos), **{tour.repechageAdvanceCount} (Repescagem)**
               </p>
             </div>
             
@@ -715,6 +738,19 @@ export default function Tournaments() {
                 />
               </div>
             </div>
+
+            {/* NOVO: CAMPO CLASSIFICADOS REPESCAGEM COM LABEL */}
+            <div className="mb-4">
+              <label className="sub block mb-1 text-white/80 text-left">Classificados da Repescagem</label>
+              <input
+                  type="number"
+                  min="1"
+                  placeholder="1"
+                  value={editing.repechageAdvanceCount}
+                  onChange={(e) => setEditing({...editing, repechageAdvanceCount: Number(e.target.value)})}
+                  className={`${inputStyle} w-full`}
+              />
+            </div>
             
             <div className="flex justify-between mt-4">
               <button
@@ -795,16 +831,28 @@ export default function Tournaments() {
               {/* SEÇÃO 1: SELEÇÃO DE ROBÔS */}
               <div>
                   <h3 className="text-lg font-bold text-white mb-2 text-left">1. Selecionar Participantes</h3>
-                  <p className="text-sm text-white/70 mb-3 text-left">Escolha os robôs que competirão nesta fase eliminatória adicional (mínimo 2). Apenas participantes do torneio principal são listados.</p>
+                  <p className="text-sm text-white/70 mb-3 text-left">
+                      Escolha os robôs que competirão nesta fase eliminatória adicional (mínimo 2). 
+                      A lista exibe apenas robôs **selecionados para o torneio principal**.
+                      <span className="font-bold text-yellow-300 block mt-1">ATENÇÃO: Selecione APENAS os robôs ELIMINADOS na Fase de Grupos.</span>
+                  </p>
                   
                   {/* Botões de Ação do Modal */}
                   <div className="flex justify-start space-x-3 mb-3">
-                      <button onClick={() => setSelectedRepechageRobots(managingRepechage.participatingRobotIds || [])} className="text-xs bg-purple-500/50 hover:bg-purple-500/70 p-1 rounded">Selecionar Todos (Participantes)</button>
-                      <button onClick={() => setSelectedRepechageRobots([])} className="text-xs bg-gray-500/50 hover:bg-gray-500/70 p-1 rounded">Limpar Seleção</button>
+                      <button 
+                        onClick={() => setSelectedRepechageRobots(managingRepechage.participatingRobotIds || [])} 
+                        className="text-xs bg-purple-500/50 hover:bg-purple-500/70 p-1 rounded">
+                          Selecionar Todos (Participantes)
+                      </button>
+                      <button 
+                        onClick={() => setSelectedRepechageRobots([])} 
+                        className="text-xs bg-gray-500/50 hover:bg-gray-500/70 p-1 rounded">
+                          Limpar Seleção
+                      </button>
                   </div>
 
                   <div className="max-h-60 overflow-y-auto space-y-2 bg-black/10 p-3 rounded">
-                      {/* Filtra apenas robôs que estão na lista principal de participantes */}
+                      {/* FILTRO: Lista todos os participantes do torneio principal */}
                       {state.robots
                           .filter(r => managingRepechage.participatingRobotIds?.includes(r.id))
                           .map(robot => (
@@ -820,7 +868,9 @@ export default function Tournaments() {
                               }
                           </div>
                       ))}
-                      {(managingRepechage.participatingRobots?.length || 0) === 0 && <p className="text-center text-white/50">Nenhum robô foi adicionado ao torneio principal.</p>}
+                      {(managingRepechage.participatingRobots?.length || 0) === 0 && 
+                          <p className="text-center text-white/50">Nenhum robô foi adicionado ao torneio principal.</p>
+                      }
                   </div>
                   
                   <p className="text-sm text-white/70 mt-3">Robôs na Repescagem: {selectedRepechageRobots.length}</p>
@@ -834,7 +884,7 @@ export default function Tournaments() {
                   </button>
               </div>
 
-              {/* SEÇÃO 2: GERAR CHAVEAMENTO */}
+              {/* SEÇÃO 2: GERAR PARTIDAS */}
               <div className="border-t border-white/20 pt-4">
                   <h3 className="text-lg font-bold text-white mb-2 text-left">2. Gerar Partidas</h3>
                   <p className="text-sm text-white/70 mb-4 text-left">
