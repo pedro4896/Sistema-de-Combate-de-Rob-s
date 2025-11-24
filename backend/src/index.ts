@@ -916,33 +916,33 @@ function checkAndGenerateGrandFinal(): boolean {
   
   // 2. Adiciona o(s) vencedor(es) da repescagem (para honrar repechageAdvanceCount)
   const hasRepechageMatches = state.matches.some(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
-  const repechageAdvanceCount = tournament.repechageAdvanceCount || 1;
+  const repechageAdvanceCount = tournament.repechageAdvanceCount || 1; // << PEGA O VALOR AJUSTÁVEL AQUI
 
-  if (hasRepechageMatches) {
-      const allRepechageMatches = state.matches.filter(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
-      const allRepechageFinished = allRepechageMatches.every(m => m.finished);
+if (hasRepechageMatches) {
+    const allRepechageMatches = state.matches.filter(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
+    const allRepechageFinished = allRepechageMatches.every(m => m.finished);
+    
+    if (!allRepechageFinished) return false; 
+
+    // Encontrar a última rodada de eliminação completa (que tem o vencedor final)
+    const uniqueRounds = [...new Set(allRepechageMatches.map(m => m.round))].sort((a, b) => b - a);
+    
+    // Se a repescagem foi gerada e finalizada
+    if (uniqueRounds.length > 0) {
+      const lastRoundNumber = uniqueRounds[0];
+      // Encontrar as partidas finais que já têm um vencedor (finished=true)
+      const matchesInLastRound = allRepechageMatches.filter(m => m.round === lastRoundNumber && m.winner);
       
-      if (!allRepechageFinished) return false; 
+      // Coleta todos os vencedores da última rodada (deve ser 1 se o chaveamento for eliminação simples)
+      const allLastRoundWinners = matchesInLastRound.map(m => m.winner).filter(Boolean) as Robot[];
 
-      // Encontrar a última rodada de eliminação completa (que tem o vencedor final)
-      const uniqueRounds = [...new Set(allRepechageMatches.map(m => m.round))].sort((a, b) => b - a);
-      
-      // Se a repescagem foi gerada e finalizada
-      if (uniqueRounds.length > 0) {
-        const lastRoundNumber = uniqueRounds[0];
-        // Encontrar as partidas finais que já têm um vencedor (finished=true)
-        const matchesInLastRound = allRepechageMatches.filter(m => m.round === lastRoundNumber && m.winner);
-        
-        // Coleta todos os vencedores da última rodada (deve ser 1 se o chaveamento for eliminação simples)
-        const allLastRoundWinners = matchesInLastRound.map(m => m.winner).filter(Boolean) as Robot[];
+      // Pega o(s) N primeiros vencedores da última rodada. 
+      // Atribui o resultado à variável de escopo mais alto
+      advancingRepechageRobots = allLastRoundWinners.slice(0, repechageAdvanceCount);
+    }
 
-        // Pega o(s) N primeiros vencedores da última rodada. 
-        // No sistema atual de eliminação simples, só o campeão (o primeiro) avançará.
-        const advancingRepechageRobots = allLastRoundWinners.slice(0, repechageAdvanceCount);
-
-        champions.push(...advancingRepechageRobots);
-      }
-  }
+    champions.push(...advancingRepechageRobots);
+}
 
 
   // 3. Verifica se a Fase Final (group: null) já foi gerada (checa se o Round 1 existe)

@@ -9,8 +9,8 @@ export interface Robot {
 export type Phase = "groups" | "elimination" | "repechage"; // ADICIONADO "repechage"
 
 export interface Tournament { // ATUALIZADO
-  id: string;
-  name: string;
+  id: string; 
+  name: string; 
   description?: string; 
   date?: string; 
   image?: string; 
@@ -20,6 +20,7 @@ export interface Tournament { // ATUALIZADO
   participatingRobotIds?: string[]; 
   participatingRobots?: Robot[]; 
   repechageRobotIds?: string[]; // NOVO
+  repechageAdvanceCount: number; // << ADICIONADO AQUI
   repechageWinner?: Robot | null; // NOVO
 }
 
