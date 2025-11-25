@@ -118,8 +118,8 @@ export default function Tournaments() {
         return;
     }
 
-    if (file.size > 1024 * 1024) { // Limite de 1MB
-        toast.error("O arquivo é muito grande (máx: 1MB).");
+    if (file.size > 5* 1024 * 1024) { // Limite de 5MB
+        toast.error("O arquivo é muito grande (máx: 5MB).");
         e.target.value = '';
         setTargetImage("");
         setTargetFileName("");
@@ -451,7 +451,7 @@ export default function Tournaments() {
 
           {/* Input Imagem URL/Upload */}
           <div className="w-96">
-            <label className="sub block mb-1">Imagem do Torneio (Upload ou URL, máx: 1MB)</label>
+            <label className="sub block mb-1">Imagem do Torneio (Upload ou URL, máx: 5MB)</label>
             <div className="flex items-center gap-2">
                 <input 
                     type="file" 
@@ -471,7 +471,7 @@ export default function Tournaments() {
                     <Upload size={18} />
                     {newTourFileName || (newTourImage.length > 0 && newTourImage.startsWith('data:')) ? 
                         `Arquivo: ${newTourFileName || 'Base64 (' + Math.ceil(newTourImage.length/1024) + 'KB)'}` :
-                        "Upload da Imagem (máx: 1MB)"
+                        "Upload da Imagem (máx: 5MB)"
                     }
                 </label>
             </div>
@@ -678,7 +678,7 @@ export default function Tournaments() {
 
             {/* CAMPO IMAGEM/UPLOAD COM LABEL */}
             <div className="text-left w-full mb-3">
-                <label className="sub block mb-1 text-white/80">Imagem do Robô (Upload ou URL, máx: 1MB)</label>
+                <label className="sub block mb-1 text-white/80">Imagem do Robô (Upload ou URL, máx: 5MB)</label>
                 <div className="flex items-center gap-2">
                     <input 
                         type="file" 
@@ -698,7 +698,7 @@ export default function Tournaments() {
                         <Upload size={18} />
                         {editTourFileName || (editImage && editImage.startsWith('data:')) ? 
                             `Arquivo: ${editTourFileName || 'Base64 (' + Math.ceil(editImage.length/1024) + 'KB)'}` :
-                            "Upload da Imagem (máx: 1MB)"
+                            "Upload da Imagem (máx: 5MB)"
                         }
                     </label>
                 </div>

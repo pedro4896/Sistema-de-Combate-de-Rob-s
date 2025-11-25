@@ -102,8 +102,8 @@ export default function Robots() {
         return;
     }
 
-    if (file.size > 1024 * 1024) { // Limite de 1MB para não sobrecarregar o DB/Base64
-        toast.error("O arquivo é muito grande (máx: 1MB).");
+    if (file.size > 5 * 1024 * 1024) { // Limite de 5MB para não sobrecarregar o DB/Base64
+        toast.error("O arquivo é muito grande (máx: 5MB).");
         e.target.value = '';
         setTargetImage("");
         setTargetFileName("");
@@ -263,7 +263,7 @@ export default function Robots() {
                     <Upload size={18} />
                     {fileName || (image.length > 0 && image.startsWith('data:')) ? 
                         `Arquivo: ${fileName || 'Em Base64 (' + Math.ceil(image.length/1024) + 'KB)'}` :
-                        "Upload da Imagem (máx: 1MB)"
+                        "Upload da Imagem (máx: 5MB)"
                     }
                 </label>
             </div>
@@ -364,7 +364,7 @@ export default function Robots() {
                         <Upload size={18} />
                         {editFileName || (editImage && editImage.startsWith('data:')) ? 
                             `Arquivo: ${editFileName || 'Em Base64 (' + Math.ceil(editImage.length/1024) + 'KB)'}` :
-                            "Upload da Imagem (máx: 1MB)"
+                            "Upload da Imagem (máx: 5MB)"
                         }
                     </label>
                 </div>
