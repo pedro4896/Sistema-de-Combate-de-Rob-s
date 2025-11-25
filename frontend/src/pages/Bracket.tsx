@@ -41,7 +41,6 @@ type ArenaState = {
     // ... outros campos
 };
 
-
 export default function Chaveamento() {
   const [state, setState] = useState<ArenaState | null>(null);
 
@@ -57,7 +56,6 @@ export default function Chaveamento() {
 
   // Variável para armazenar o vencedor da repescagem (para exibição)
   const repechageWinner = displayedTournament?.repechageWinner;
-
 
   // NOVO FLUXO DE BUSCA DE DADOS
   const fetchTournamentData = async (tourId: string, globalState: any) => {
@@ -123,13 +121,11 @@ export default function Chaveamento() {
     return onMessage((m: any) => m.type === "UPDATE_STATE" && fetchGlobalState(null)); 
   }, []); 
 
-  
   const handleTournamentSelectChange = (id: string) => {
       setSelectedTournamentId(id);
       fetchGlobalState(id);
   }
 
-  
   const gerarChaveamento = async () => {
     if (!displayedTournament) {
       toast.error("Selecione ou crie um torneio primeiro!");
@@ -259,7 +255,6 @@ export default function Chaveamento() {
         )}
     </div>
   );
-
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#000814] to-[#001933] text-white p-8 select-none">
@@ -450,7 +445,7 @@ export default function Chaveamento() {
         <span className="text-arena-accent font-bold">
           {advancePerGroupActive} primeiros
         </span>{" "}
-        de cada grupo avançam, e o vencedor da **Repescagem** se junta à Fase Final.
+        de cada grupo avançam, e o vencedor da <strong>Repescagem</strong> se junta à Fase Final.
       </div>
 
     </div>

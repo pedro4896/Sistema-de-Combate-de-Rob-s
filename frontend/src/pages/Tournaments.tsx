@@ -569,7 +569,7 @@ export default function Tournaments() {
                   Criado em: {tour.date || "N/A"}
               </p>
               <p className="text-xs text-white/50 mt-1">
-                  Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup} (Grupos), **{tour.repechageAdvanceCount} (Repescagem)**
+                  Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup} (Grupos), {tour.repechageAdvanceCount} (Repescagem)
               </p>
             </div>
             
@@ -833,7 +833,7 @@ export default function Tournaments() {
                   <h3 className="text-lg font-bold text-white mb-2 text-left">1. Selecionar Participantes</h3>
                   <p className="text-sm text-white/70 mb-3 text-left">
                       Escolha os robôs que competirão nesta fase eliminatória adicional (mínimo 2). 
-                      A lista exibe apenas robôs **selecionados para o torneio principal**.
+                      A lista exibe apenas robôs <strong>selecionados para o torneio principal</strong>.
                       <span className="font-bold text-yellow-300 block mt-1">ATENÇÃO: Selecione APENAS os robôs ELIMINADOS na Fase de Grupos.</span>
                   </p>
                   
