@@ -976,7 +976,8 @@ function checkAndGenerateGrandFinal(): boolean {
   return false;
 }
 
-function tryAdvanceToEliminationOrGrandFinal(): boolean {
+// Linha 806 (aproximadamente) - Certifique-se de substituir a assinatura inteira da função.
+async function tryAdvanceToEliminationOrGrandFinal(): Promise<boolean> {
     if (!state.tournamentId) return false;
 
     // 1. FORÇA RE-CÁLCULO DAS TABELAS (para garantir dados frescos)
@@ -1000,8 +1001,8 @@ function tryAdvanceToEliminationOrGrandFinal(): boolean {
     
     if (hasGroups) {
         // A. Geração: Se a fase de grupos terminou, tenta gerar a Eliminação de Grupos (se ainda não gerada)
+        const allGroupPhaseMatches = state.matches.filter(x => x.phase === "groups" && x.tournamentId === state.tournamentId);
         if (!hasGroupEliminations) {
-            const allGroupPhaseMatches = state.matches.filter(x => x.phase === "groups");
             if (allGroupPhaseMatches.every(x => x.finished)) {
                 if (generateGroupEliminations()) {
                     console.log("➡️ Partidas de eliminação interna de grupos geradas.");
@@ -1011,13 +1012,13 @@ function tryAdvanceToEliminationOrGrandFinal(): boolean {
         }
         
         // B. Progressão: Se a eliminação de grupos já existe, tenta progredir WOs.
-        if (progressGroupEliminations()) {
+        if (await progressGroupEliminations()) { // AWAIT ADICIONADO
             return true;
         }
 
         // Se chegou aqui, a eliminação de grupos está no último round (e talvez concluída)
         updateGroupChampions(); 
-        isGroupEliminationFinished = state.matches.filter(m => m.phase === 'elimination' && m.group !== null).every(m => m.finished);
+        isGroupEliminationFinished = state.matches.filter(m => m.phase === 'elimination' && m.group !== null && m.tournamentId === state.tournamentId).every(m => m.finished);
     }
     
     // 4. Verificação de Conclusão da Repescagem
@@ -1035,11 +1036,27 @@ function tryAdvanceToEliminationOrGrandFinal(): boolean {
         }
     }
     
-    // 5. Verificação FINAL para gerar a Grande Final
+    // 5. Verificação FINAL para gerar a Grande Final OU FINALIZAR (CORREÇÃO CRÍTICA)
     // CHAVE FINAL: Só avança se o Requisito da Repescagem for atendido E a Eliminação de Grupos estiver concluída
     if (isRepechageRequiredAndCompleted && isGroupEliminationFinished) {
+        // Tenta gerar a chave final
         if (checkAndGenerateGrandFinal()) {
             console.log("🏆 Fase final do torneio gerada.");
+            return true;
+        }
+
+        // CORREÇÃO: Se a geração da chave final falhou (retornou false), e todas as fases anteriores
+        // foram concluídas, isso implica que há 1 ou 0 campeões, e o torneio deve ser finalizado.
+        // Verificamos se a final JÁ EXISTE (para não finalizar se a chave já foi gerada e está em andamento).
+        const finalAlreadyExists = state.matches.some(
+            (m) => m.phase === "elimination" && m.group === null && m.round === 1 && m.tournamentId === state.tournamentId
+        );
+        
+        if (!finalAlreadyExists) {
+            // Se a final ainda não existe e a tentativa de gerar falhou (champions.length < 2),
+            // o torneio está logicamente no fim. Finalizamos.
+            await finalizeActiveTournament(); // AWAIT ADICIONADO
+            console.log("🎉 Torneio finalizado automaticamente: não há mais partidas para gerar.");
             return true;
         }
     }
@@ -1056,7 +1073,7 @@ function tryAdvanceToEliminationOrGrandFinal(): boolean {
     return false;
 }
 
-function progressGroupEliminations(): boolean {
+async function progressGroupEliminations(): Promise<boolean> {
   const groupLabels = Object.keys(state.groupTables || {});
   const newMatches: Match[] = [];
 
@@ -1118,7 +1135,7 @@ function progressGroupEliminations(): boolean {
 
   if (newMatches.length > 0) {
     // Atenção: insertMatches chama loadStateFromDBAndBroadcast()
-    insertMatches(newMatches); 
+    await insertMatches(newMatches); // AWAIT ADICIONADO
     return true; // Retorna true se inseriu partidas
   }
   
@@ -1264,19 +1281,19 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
   
   // A. Se a partida finalizada é de fase de grupos
   if (currentMatchInState.phase === "groups") {
-    const allGroupMatches = state.matches.filter(x => x.phase === "groups" && x.tournamentId === currentMatchInState.tournamentId);
+    const allGroupMatches = state.matches.filter(x => x.tournamentId === currentMatchInState.tournamentId && x.phase === "groups");
     const allGroupsDone = allGroupMatches.every(x => x.finished);
     
     if (allGroupsDone) {
         // Grupos concluídos. Tenta avançar para a próxima fase.
-        if (tryAdvanceToEliminationOrGrandFinal()) return; 
+        if (await tryAdvanceToEliminationOrGrandFinal()) return; // AWAIT ADICIONADO
     }
   } 
   
   // B. Se a partida finalizada é de repescagem (Round-Robin)
   else if (currentMatchInState.phase === "repechage") {
       // Repescagem concluída. Tenta avançar para a próxima fase.
-      if (tryAdvanceToEliminationOrGrandFinal()) return; 
+      if (await tryAdvanceToEliminationOrGrandFinal()) return; // AWAIT ADICIONADO
   }
   
   // C. Se a partida finalizada é de eliminação (interna de grupo ou Fase Final Geral)
@@ -1321,7 +1338,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
                 await loadStateFromDBAndBroadcast(); // Recarrega após preencher as próximas lutas
                 
                 // Tenta avançar para a próxima fase (Eliminação de Grupos ou Final).
-                if (tryAdvanceToEliminationOrGrandFinal()) return;
+                if (await tryAdvanceToEliminationOrGrandFinal()) return; // AWAIT ADICIONADO
             }
         } 
   }
