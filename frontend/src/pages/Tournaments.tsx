@@ -20,7 +20,8 @@ type Tournament = {
   participatingRobots?: Robot[];
   repechageRobotIds?: string[];
   repechageWinner?: Robot | null;
-  repechageAdvanceCount: number; // NOVO CAMPO
+  repechageAdvanceCount: number; 
+  useRepechage: boolean; // NOVO CAMPO: Flag para ativar/desativar repescagem
 };
 type ArenaState = {
     robots: Robot[];
@@ -84,7 +85,8 @@ export default function Tournaments() {
   const [newTourImage, setNewTourImage] = useState("");
   const [newGroupCount, setNewGroupCount] = useState(2);
   const [newAdvancePerGroup, setNewAdvancePerGroup] = useState(2);
-  const [newRepechageAdvanceCount, setNewRepechageAdvanceCount] = useState(1); // NOVO ESTADO
+  const [newRepechageAdvanceCount, setNewRepechageAdvanceCount] = useState(1);
+  const [newUseRepechage, setNewUseRepechage] = useState(true); // NOVO ESTADO: Ativado por padrão
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Tournament | null>(null);
   const [editImage, setEditImage] = useState("");
@@ -178,7 +180,8 @@ export default function Tournaments() {
         image: newTourImage.trim() || null,
         groupCount: newGroupCount,
         advancePerGroup: newAdvancePerGroup,
-        repechageAdvanceCount: newRepechageAdvanceCount, // NOVO: Campo adicionado
+        repechageAdvanceCount: newRepechageAdvanceCount, 
+        useRepechage: newUseRepechage, // NOVO: Campo adicionado
       },
     });
 
@@ -190,7 +193,8 @@ export default function Tournaments() {
       setNewTourFileName("");
       setNewGroupCount(2); 
       setNewAdvancePerGroup(2); 
-      setNewRepechageAdvanceCount(1); // Resetar para o valor padrão
+      setNewRepechageAdvanceCount(1); 
+      setNewUseRepechage(true); // Resetar o estado da repescagem
     } else {
       toast.error(result.error || "Falha ao criar o torneio.", { duration: 3000 });
     }
@@ -208,7 +212,8 @@ export default function Tournaments() {
           image: editImage.trim() || null, 
           groupCount: editing.groupCount,
           advancePerGroup: editing.advancePerGroup,
-          repechageAdvanceCount: editing.repechageAdvanceCount, // NOVO: Campo adicionado
+          repechageAdvanceCount: editing.repechageAdvanceCount, 
+          useRepechage: editing.useRepechage, // NOVO: Campo adicionado
         },
       });
 
@@ -293,7 +298,8 @@ export default function Tournaments() {
     // NOVO: Garantir que o campo seja preenchido no estado de edição
     setEditing(prev => ({ 
         ...prev!, 
-        repechageAdvanceCount: tournament.repechageAdvanceCount || 1 // Inicializa com o valor atual ou 1
+        repechageAdvanceCount: tournament.repechageAdvanceCount || 1, // Inicializa com o valor atual ou 1
+        useRepechage: tournament.useRepechage ?? true, // NOVO: Inicializa o useRepechage com o valor atual ou true como fallback
     }));
   };
 
@@ -338,14 +344,19 @@ export default function Tournaments() {
   // --- LÓGICA DE GERENCIAMENTO DE REPESCAGEM (NOVAS FUNÇÕES) ---
   
   const openRepechageManager = (tournament: Tournament) => {
+      // Verifica se a repescagem está ativa para este torneio
+      if (!tournament.useRepechage) {
+          toast.error(`A repescagem está desativada para o torneio "${tournament.name}". Ative-a nas opções de edição para gerenciá-la.`);
+          return;
+      }
       setManagingRepechage(tournament);
       // Carrega os robôs de repescagem existentes no estado local do modal
       setSelectedRepechageRobots(tournament.repechageRobotIds || []);
   };
 
   const closeRepechageManager = () => {
-      setManagingRepechage(null);
-      setSelectedRepechageRobots([]);
+    setManagingRepechage(null);
+    setSelectedRepechageRobots([]);
   };
 
   const toggleRepechageRobotSelection = (robotId: string) => {
@@ -382,6 +393,11 @@ export default function Tournaments() {
           return;
       }
       
+      if (!currentTour.useRepechage) {
+          toast.error("A repescagem está desativada neste torneio.");
+          return;
+      }
+      
       const repechageMatchesExist = state.matches.some(m => m.tournamentId === id && m.phase === 'repechage');
       if (repechageMatchesExist) {
           toast.error("O chaveamento da repescagem já foi gerado. Finalize as partidas existentes.");
@@ -391,7 +407,7 @@ export default function Tournaments() {
       setConfirmationDialog({
           open: true,
           title: `Gerar Repescagem para "${name}"`,
-          description: `Isso irá gerar as partidas de eliminação para os ${currentTour.repechageRobotIds?.length} robôs selecionados. A Fase de Grupos deve estar completa. Confirma?`,
+          description: `Isso irá gerar as partidas de Round-Robin para os ${currentTour.repechageRobotIds?.length} robôs selecionados. A Fase de Grupos deve estar completa. Confirma?`,
           action: async () => {
               const result = await api(`/tournaments/${id}/generate-repechage`, { method: "POST" });
               if (result.ok) {
@@ -509,7 +525,7 @@ export default function Tournaments() {
               value={newAdvancePerGroup}
               onChange={(e) => setNewAdvancePerGroup(Number(e.target.value))}
             />
-          </div>
+            </div>
             
           {/* NOVO: Input Classificados (Repescagem) */}
           <div>
@@ -521,7 +537,21 @@ export default function Tournaments() {
               placeholder="1"
               value={newRepechageAdvanceCount}
               onChange={(e) => setNewRepechageAdvanceCount(Number(e.target.value))}
+              disabled={!newUseRepechage} // Desabilita se não for usar repescagem
             />
+          </div>
+          
+          {/* NOVO: Checkbox Usar Repescagem */}
+          <div className="flex items-center pt-5">
+              <label className="sub block text-white/80 flex items-center gap-2 cursor-pointer">
+                  <input
+                      type="checkbox"
+                      checked={newUseRepechage}
+                      onChange={(e) => setNewUseRepechage(e.target.checked)}
+                      className="form-checkbox h-5 w-5 text-purple-600 rounded"
+                  />
+                  Utilizar Repescagem
+              </label>
           </div>
 
           <button className="btn btn-accent flex items-center gap-2" onClick={handleCreateTournament} disabled={loading || !newTourName.trim()}>
@@ -569,7 +599,13 @@ export default function Tournaments() {
                   Criado em: {tour.date || "N/A"}
               </p>
               <p className="text-xs text-white/50 mt-1">
-                  Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup} (Grupos), {tour.repechageAdvanceCount} (Repescagem)
+                  Participantes: {tour.participatingRobots?.length || 0} Robôs | Grupos: {tour.groupCount}, Classificados: {tour.advancePerGroup} (Grupos)
+                  {tour.useRepechage && 
+                      <>, Repescagem: <strong className="text-purple-300">ATIVA ({tour.repechageAdvanceCount} classificados)</strong></>
+                  }
+                  {!tour.useRepechage && 
+                      <>, Repescagem: <strong className="text-gray-400">DESATIVADA</strong></>
+                  }
               </p>
             </div>
             
@@ -597,7 +633,7 @@ export default function Tournaments() {
               </button>
 
               {/* Botão Gerenciar Repescagem (NOVO) */}
-              {(tour.status === 'draft' || tour.status === 'active') && (tour.participatingRobots?.length || 0) > 0 && (
+              {tour.useRepechage && (tour.status === 'draft' || tour.status === 'active') && (tour.participatingRobots?.length || 0) > 0 && (
                   <button
                       title="Gerenciar Repescagem"
                       onClick={() => openRepechageManager(tour)}
@@ -749,7 +785,21 @@ export default function Tournaments() {
                   value={editing.repechageAdvanceCount}
                   onChange={(e) => setEditing({...editing, repechageAdvanceCount: Number(e.target.value)})}
                   className={`${inputStyle} w-full`}
+                  disabled={!editing.useRepechage} // Desabilita se não for usar repescagem
               />
+            </div>
+
+            {/* NOVO: Checkbox Utilizar Repescagem */}
+            <div className="mb-4 text-left">
+                <label className="sub block mb-1 text-white/80 text-left flex items-center gap-2 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={editing.useRepechage}
+                        onChange={(e) => setEditing({...editing, useRepechage: e.target.checked})}
+                        className="form-checkbox h-5 w-5 text-purple-600 rounded"
+                    />
+                    Utilizar Repescagem
+                </label>
             </div>
             
             <div className="flex justify-between mt-4">
@@ -818,7 +868,7 @@ export default function Tournaments() {
         </div>
       )}
 
-      {/* === NOVO MODAL DE GERENCIAMENTO DE REPESCAGEM === */}
+      {/* === MODAL DE GERENCIAMENTO DE REPESCAGEM === */}
       {managingRepechage && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-lg shadow-2xl border border-purple-400/30">
@@ -890,7 +940,7 @@ export default function Tournaments() {
                   <p className="text-sm text-white/70 mb-4 text-left">
                       {state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
                           <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> O chaveamento da repescagem JÁ FOI GERADO.</span> :
-                          "Gere o chaveamento depois que a Fase de Grupos terminar. Os robôs selecionados acima serão usados."
+                          `Gere o chaveamento Round-Robin depois que a Fase de Grupos terminar. ${managingRepechage.repechageAdvanceCount} robô(s) será(ão) classificado(s) para a Fase Final.`
                       }
                   </p>
                   <button

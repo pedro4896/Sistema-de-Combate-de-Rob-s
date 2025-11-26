@@ -87,9 +87,17 @@ async function setupDatabase() {
         group_count INT DEFAULT 2,
         participating_robot_ids JSONB DEFAULT '[]',
         repechage_robot_ids JSONB DEFAULT '[]', -- NOVO: Robôs selecionados para repescagem
-        repechage_advance_count INT DEFAULT 1 -- NOVO: Quantidade de robôs que avançam da repescagem
+        repechage_advance_count INT DEFAULT 1, -- NOVO: Quantidade de robôs que avançam da repescagem
+        use_repechage BOOLEAN DEFAULT FALSE -- NOVO: Indica se a repescagem será usada
     );
   `);
+
+  await dbClient.query(`
+    ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS repechage_advance_count INT DEFAULT 1;
+  `);
+  await dbClient.query(`
+    ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS use_repechage BOOLEAN DEFAULT TRUE;
+  `); // Usar TRUE como default para não quebrar torneios existentes
 
   // CORREÇÃO: Adiciona colunas se elas não existirem (para usuários com DBs antigos)
   await dbClient.query(`
@@ -294,6 +302,7 @@ async function loadStateFromDB(): Promise<ArenaState> {
         participatingRobots,
         repechageRobotIds, // NOVO
         repechageAdvanceCount: row.repechage_advance_count || 1, // NOVO
+        useRepechage: row.use_repechage !== undefined ? row.use_repechage : true, // NOVO: Garante o valor
       };
     });
     
@@ -692,6 +701,8 @@ function generateRepechageMatches(): boolean {
   const tournament = state.tournaments.find(t => t.id === state.tournamentId);
   if (!tournament || !tournament.repechageRobotIds) return false;
 
+  if (!tournament.useRepechage) return false; // NOVO: Aborta se a repescagem estiver desativada
+
   const robotMap = Object.fromEntries(state.robots.map(r => [r.id, r]));
   
   const repechageParticipants = tournament.repechageRobotIds
@@ -807,7 +818,6 @@ function generateGroupEliminations() {
   return false; // Retorna false se nenhuma partida foi gerada
 }
 
-// backend/src/index.ts - Substituir a função COMPLETA checkAndGenerateGrandFinal
 function checkAndGenerateGrandFinal(): boolean {
   // 0. Verifica pré-requisitos iniciais
   if (!state.tournamentId) return false;
@@ -826,7 +836,8 @@ function checkAndGenerateGrandFinal(): boolean {
   let allGroupEliminationsFinished = true;
 
   // 2. Coleta os campeões de cada grupo (se a eliminação interna estiver completa)
-  const eliminationGroupLabels = allGroupLabels.filter(g => g !== 'R'); // Filtra o grupo de Repescagem ('R')
+  // Filtra o grupo de Repescagem ('R') para não o considerar parte da Eliminação de Grupos.
+  const eliminationGroupLabels = allGroupLabels.filter(g => g !== 'R'); 
 
   for (const g of eliminationGroupLabels) {
     const gMatches = state.matches
@@ -860,30 +871,36 @@ function checkAndGenerateGrandFinal(): boolean {
   // Se existiam grupos de eliminação e algum não terminou, a final não pode ser gerada.
   if (eliminationGroupLabels.length > 0 && !allGroupEliminationsFinished) return false;
   
+  
   // 3. Adiciona o(s) vencedor(es) da REPESCAGEM ROUND-ROBIN
+  const useRepechage = tournament.useRepechage ?? false; // LÊ a flag atual
   const repechageAdvanceCount = tournament.repechageAdvanceCount || 1; 
-  const repechageGroupTable = state.groupTables?.['R']; // A tabela AGORA está garantida como fresca.
+  let advancingRepechageRobots: Robot[] = [];
 
-  if (repechageGroupTable && repechageGroupTable.length > 0) {
+  const repechageGroupTable = state.groupTables?.['R'];
+
+  // A FASE DE REPESCAGEM SÓ É CONSIDERADA SE ESTIVER ATIVA E HOUVER DADOS DE TABELA
+  if (useRepechage && repechageGroupTable && repechageGroupTable.length > 0) { 
     const repechageMatches = state.matches.filter(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
     const allRepechageFinished = repechageMatches.length > 0 && repechageMatches.every(m => m.finished);
     
-    if (!allRepechageFinished) return false; // Se a repescagem não terminou, espera.
+    if (!allRepechageFinished) return false; // Se a repescagem está ATIVA, mas não terminou, ABORTA.
 
     // Seleciona o(s) N primeiros da tabela, respeitando repechageAdvanceCount
     const advancingRepechageItems = repechageGroupTable.slice(0, repechageAdvanceCount);
     
-    const advancingRepechageRobots = advancingRepechageItems
+    advancingRepechageRobots = advancingRepechageItems
         .map(item => state.robots.find(r => r.id === item.robotId))
         .filter(Boolean) as Robot[];
             
     // Adiciona os classificados da repescagem aos campeões
     champions.push(...advancingRepechageRobots);
   }
-
+  // SE useRepechage FOR FALSE, ESTE BLOCO É PULADO, E NADA DA REPESCAGEM É ADICIONADO.
+  
 
   // 4. Verifica se a Fase Final Geral pode ser gerada
-  // Se houver pelo menos 2 robôs (dos grupos de eliminação + repescagem) e a Fase Final não foi gerada
+  // Verifica se a Fase Final (group: null) já foi gerada (checa se o Round 1 existe)
   const alreadyExists = state.matches.some(
     (m) => m.phase === "elimination" && m.group === null && m.round === 1 && m.tournamentId === state.tournamentId
   );
@@ -962,27 +979,30 @@ function checkAndGenerateGrandFinal(): boolean {
 function tryAdvanceToEliminationOrGrandFinal(): boolean {
     if (!state.tournamentId) return false;
 
-    // 1. Condições de existência
-    const hasRepechageMatches = state.matches.some(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
-    const hasGroupEliminations = state.matches.some(m => m.phase === "elimination" && m.group !== null && m.tournamentId === state.tournamentId);
-    const hasGroups = Object.keys(state.groupTables || {}).filter(g => g !== 'R').length > 0;
-
-    // Se não há grupos nem repescagem (torneio simples), nada a fazer aqui.
-    if (!hasGroups && !hasRepechageMatches) return false;
+    // 1. FORÇA RE-CÁLCULO DAS TABELAS (para garantir dados frescos)
+    const allMatchesInTournament = state.matches.filter(m => m.tournamentId === state.tournamentId);
+    state.groupTables = computeGroupTables(state.robots, allMatchesInTournament); 
     
-    // 2. Verifica se a Repescagem está concluída (só se ela existir)
-    let isRepechageFinished = true;
-    if (hasRepechageMatches) {
-        const allRepechageMatches = state.matches.filter(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
-        isRepechageFinished = allRepechageMatches.length > 0 && allRepechageMatches.every(m => m.finished);
-    }
+    // 2. Status do Torneio e Grupos
+    const tournament = state.tournaments.find(t => t.id === state.tournamentId);
+    if (!tournament) return false;
+    
+    // CORREÇÃO CRÍTICA: Lê a flag de uso. Assume TRUE como padrão seguro para retrocompatibilidade.
+    // Prioriza explicitamente o valor FALSE se o checkbox foi desmarcado e salvo.
+    const useRepechage = tournament.useRepechage === false ? false : true; 
+    
+    const eliminationGroupLabels = Object.keys(state.groupTables || {}).filter(g => g !== 'R');
+    const hasGroups = eliminationGroupLabels.length > 0;
     
     // 3. Tenta gerar ou progredir a Eliminação de Grupos
+    const hasGroupEliminations = state.matches.some(m => m.phase === "elimination" && m.group !== null && m.tournamentId === state.tournamentId);
+    let isGroupEliminationFinished = !hasGroups; // Assume concluída se não há grupos
+    
     if (hasGroups) {
-        // Tenta gerar a Fase de Eliminação de Grupos (se não foi gerada)
+        // A. Geração: Se a fase de grupos terminou, tenta gerar a Eliminação de Grupos (se ainda não gerada)
         if (!hasGroupEliminations) {
-            // A geração de eliminação de grupos só funciona se a fase de grupos estiver completa.
-            if (state.matches.filter(x => x.phase === "groups").every(x => x.finished)) {
+            const allGroupPhaseMatches = state.matches.filter(x => x.phase === "groups");
+            if (allGroupPhaseMatches.every(x => x.finished)) {
                 if (generateGroupEliminations()) {
                     console.log("➡️ Partidas de eliminação interna de grupos geradas.");
                     return true;
@@ -990,23 +1010,47 @@ function tryAdvanceToEliminationOrGrandFinal(): boolean {
             }
         }
         
-        // Se a eliminação de grupos já existe, mas ainda não terminou, tenta progredir.
+        // B. Progressão: Se a eliminação de grupos já existe, tenta progredir WOs.
         if (progressGroupEliminations()) {
             return true;
         }
 
-        // Se a eliminação de grupos já existia e terminou agora, atualiza campeões.
+        // Se chegou aqui, a eliminação de grupos está no último round (e talvez concluída)
         updateGroupChampions(); 
+        isGroupEliminationFinished = state.matches.filter(m => m.phase === 'elimination' && m.group !== null).every(m => m.finished);
     }
+    
+    // 4. Verificação de Conclusão da Repescagem
+    // Se useRepechage for FALSE, a fase é considerada CONCLUÍDA (true) automaticamente.
+    let isRepechageRequiredAndCompleted = !useRepechage; 
 
-    // 4. Se a Repescagem (se existir) E a Eliminação de Grupos (se existir) estão concluídas, TENTA GERAR A FINAL.
-    const isGroupEliminationFinished = !hasGroups || state.matches.filter(m => m.phase === 'elimination' && m.group !== null).every(m => m.finished);
-
-    if (isRepechageFinished && isGroupEliminationFinished) {
+    if (useRepechage) {
+        const allRepechageMatches = state.matches.filter(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
+        
+        // Se ativada: precisa ter partidas geradas E todas finalizadas.
+        if (allRepechageMatches.length > 0 && allRepechageMatches.every(m => m.finished)) {
+            isRepechageRequiredAndCompleted = true;
+        } else {
+            isRepechageRequiredAndCompleted = false; // Se ativada e não concluída/gerada, bloqueia o avanço.
+        }
+    }
+    
+    // 5. Verificação FINAL para gerar a Grande Final
+    // CHAVE FINAL: Só avança se o Requisito da Repescagem for atendido E a Eliminação de Grupos estiver concluída
+    if (isRepechageRequiredAndCompleted && isGroupEliminationFinished) {
         if (checkAndGenerateGrandFinal()) {
-            console.log("🏆 Fase final do torneio gerada (Condições: Repescagem Concluída & Eliminação de Grupos Concluída).");
+            console.log("🏆 Fase final do torneio gerada.");
             return true;
         }
+    }
+
+    // Lógica de Logging de Erro (para o usuário saber o que falta)
+    if (useRepechage && !isRepechageRequiredAndCompleted) {
+         console.log("⚠️ Repescagem ATIVA mas não concluída. Aguardando finalização da Repescagem.");
+    } else if (hasGroups && !isGroupEliminationFinished) {
+         console.log("⚠️ Eliminação de Grupos não concluída. Aguardando finalização das partidas pendentes.");
+    } else {
+         console.log("⚠️ Fase Final não gerada. Verifique se há robôs suficientes classificados (mínimo 2 no total) ou se todas as fases anteriores foram concluídas.");
     }
 
     return false;
@@ -1592,6 +1636,7 @@ app.post("/db/load", async (_req, res) => {
 // POST: Criar Torneio (Draft)
 app.post("/tournaments", async (req, res) => {
     const { name, description, image, groupCount = 2, advancePerGroup = 2, repechageAdvanceCount = 1 } = req.body;
+    const useRepechage = req.body["useRepechage"] !== undefined ? req.body["useRepechage"] : true;
     if (!dbClient || !name) return res.status(400).json({ error: "Nome do torneio é obrigatório." });
 
     const newTournamentId = uuidv4();
@@ -1599,9 +1644,9 @@ app.post("/tournaments", async (req, res) => {
     
     try {
         await dbClient.query(
-            `INSERT INTO tournaments (id, name, description, date, image, status, advance_per_group, group_count, participating_robot_ids, repechage_robot_ids, repechage_advance_count) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [newTournamentId, name, description || null, currentDate || null, image || null, 'draft', advancePerGroup, groupCount, '[]', '[]', repechageAdvanceCount]
+            `INSERT INTO tournaments (id, name, description, date, image, status, advance_per_group, group_count, participating_robot_ids, repechage_robot_ids, repechage_advance_count, use_repechage) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [newTournamentId, name, description || null, currentDate || null, image || null, 'draft', advancePerGroup, groupCount, '[]', '[]', repechageAdvanceCount, useRepechage]
         );
         await loadStateFromDBAndBroadcast();
         res.json({ ok: true, message: `Torneio "${name}" criado com sucesso (Draft).` });
@@ -1613,7 +1658,7 @@ app.post("/tournaments", async (req, res) => {
 
 // PUT: Editar Detalhes do Torneio (Apenas Draft)
 app.put("/tournaments/:id", async (req, res) => {
-    const { name, description, image, groupCount, advancePerGroup, repechageAdvanceCount } = req.body;
+    const { name, description, image, groupCount, advancePerGroup, repechageAdvanceCount, useRepechage } = req.body;
     const tournamentId = req.params.id;
 
     if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
@@ -1655,6 +1700,11 @@ app.put("/tournaments/:id", async (req, res) => {
         values.push(tournamentId); 
         const sql = `UPDATE tournaments SET ${updates.join(', ')} WHERE id = $${paramIndex}`;
         await dbClient.query(sql, values);
+    }
+
+    if (useRepechage !== undefined) { // NOVO BLOCO
+        updates.push(`use_repechage = $${paramIndex++}`);
+        values.push(!!useRepechage); // Garante que seja booleano
     }
 
     await loadStateFromDBAndBroadcast();
