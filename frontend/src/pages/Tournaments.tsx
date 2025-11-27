@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 
 // TIPAGEM ATUALIZADA
 type Robot = { id: string; name: string; team: string; };
+
 type Tournament = { 
   id: string; 
   name: string; 
@@ -21,7 +22,7 @@ type Tournament = {
   repechageRobotIds?: string[];
   repechageWinner?: Robot | null;
   repechageAdvanceCount: number; 
-  useRepechage: boolean; // NOVO CAMPO: Flag para ativar/desativar repescagem
+  useRepechage: boolean; // ADICIONADO: Flag para indicar o uso de repescagem
 };
 type ArenaState = {
     robots: Robot[];
