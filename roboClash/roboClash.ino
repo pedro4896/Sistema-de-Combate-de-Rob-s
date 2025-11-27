@@ -4,14 +4,14 @@
 #include <ArduinoJson.h>
 
 // ===== JSON BUFFER (DEVE SER MENOR QUE 4096) =====
-const size_t WS_RX_DOC_SIZE = 1024;
+const size_t WS_RX_DOC_SIZE = 4096;
 
 // ===== WIFI =====
-const char *ssid = "teste";
-const char *password = "testeesp32";
-const char *arena_host = "172.26.132.21";
+const char *ssid = "DIGITAL-ARTHUR";
+const char *password = "valdeci102";
+const char *arena_host = "192.168.1.130";
 const int arena_port = 8080;
-const char *websocket_path = "/";
+const char *websocket_path = "/esp";
 
 // ===== LED STRIP =====
 #define LED_PIN 4
@@ -97,40 +97,48 @@ void applyLEDCommand(const String &cmd) {
     S.mode = MODE_IDLE;
     S.greenOn = true;
     S.blueOn = true;
+    Serial.println("STATE_IDLE_NORMAL");
   }
 
   else if (cmd == "STATE_IDLE_GREEN_OFF") {
     S.mode = MODE_IDLE;
     S.greenOn = false;
     S.blueOn  = true;
+    Serial.println("STATE_IDLE_GREEN_OFF");
   }
 
   else if (cmd == "STATE_IDLE_BLUE_OFF") {
     S.mode = MODE_IDLE;
     S.greenOn = true;
     S.blueOn  = false;
+    Serial.println("STATE_IDLE_BLUE_OFF");
   }
 
   else if (cmd == "STATE_OFF") {
     S.mode = MODE_IDLE;
     S.greenOn = false;
     S.blueOn = false;
+    Serial.println("STATE_OFF");
   }
 
   else if (cmd == "STATE_FIGHT_RUNNING") {
     S.mode = MODE_FIGHT_RUNNING;
+    Serial.println("STATE_FIGHT_RUNNING");
   }
 
   else if (cmd == "STATE_FIGHT_PAUSED") {
     S.mode = MODE_FIGHT_PAUSED;
+    Serial.println("STATE_FIGHT_PAUSED");
   }
 
   else if (cmd == "STATE_RECOVERY_ACTIVE") {
     S.mode = MODE_RECOVERY;
+    Serial.println("STATE_RECOVERY_ACTIVE");
   }
 
   else if (cmd == "STATE_FIGHT_ENDED") {
     S.mode = MODE_ENDED;
+    Serial.println("STATE_FIGHT_ENDED");
   }
 
   renderDirty = true;
@@ -240,7 +248,7 @@ void setup() {
   webSocket.begin(arena_host, arena_port, websocket_path);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
-  //webSocket.enableHeartbeat(30000, 5000, 3);
+  webSocket.enableHeartbeat(30000, 5000, 3);
 }
 
 // ===== LOOP =====

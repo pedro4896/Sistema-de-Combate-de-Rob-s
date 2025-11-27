@@ -175,7 +175,7 @@ export default function Landing() {
           
           {/* Ícone do Instagram e Arroba Alinhados Horizontalmente */}
           <a 
-            href="https://www.instagram.com/pedrovictor/" 
+            href="https://www.instagram.com/pedro_victor4896/" 
             target="_blank" 
             rel="noopener noreferrer" 
             aria-label="Instagram de Pedro Victor"
@@ -196,7 +196,7 @@ export default function Landing() {
                 <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
             </svg>
             {/* ⭐️ FIM DO ÍCONE ⭐️ */}
-            <span className="text-base font-medium">@PedroVictor</span>
+            <span className="text-base font-medium">@Pedro_Victor4896</span>
           </a>
 
           {/* Texto do Desenvolvedor */}

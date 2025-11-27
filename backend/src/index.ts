@@ -9,6 +9,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { Client } from "pg";
 import type { QueryResult } from "pg"; // Importa QueryResult explicitamente como tipo
+type WsClient = WebSocket & { isESP?: boolean };
 
 const SECRET_KEY = process.env.ARENA_SECRET || "arena_secret_2025";
 const PORT = Number(process.env.PORT || 8080);
@@ -19,11 +20,26 @@ const adminUser = {
   role: "admin",
 };
 
+/**
+ * Função para apenas transmitir com filtro de cliente.
+ * @param {string} type - Tipo da mensagem (ex: UPDATE_STATE).
+ * @param {any} payload - Payload da mensagem.
+ * @param {'all' | 'web'} [target='all'] - 'all' (todos) ou 'web' (não-ESP).
+ */
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }))
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server, 
+  // Adiciona a verificação para inspecionar a URL de conexão
+  verifyClient: (info, callback) => {
+    // Marca o cliente como ESP se a URL for o caminho único '/esp'
+    (info.req as any).isESP = info.req.url === '/esp'; 
+    callback(true); // Permite a conexão
+  }
+});
 
 /* ------------------ ESTADO GLOBAL E DB ------------------ */
 
@@ -397,16 +413,22 @@ initDBAndServer();
 
 /* ------------------ UTILITÁRIOS & FUNÇÕES CORE ------------------ */
 
-// Função para apenas transmitir (usada para o tick do timer - mais performática)
-function broadcastOnly(type: string, payload: any) {
+function broadcastOnly(type: string, payload: any, target: 'all' | 'web' = 'all') {
   const msg = JSON.stringify({ type, payload });
-  for (const c of wss.clients)
-    if (c.readyState === WebSocket.OPEN) c.send(msg);
+  for (const c of wss.clients as Set<WsClient>) {
+    if (c.readyState === WebSocket.OPEN) {
+      // Envia para todos, OU (se o alvo for 'web' E o cliente não for ESP)
+      if (target === 'all' || (target === 'web' && !c.isESP)) {
+         c.send(msg);
+      }
+    }
+  }
 }
 
-// Função para salvar no DB e transmitir (usada para mudanças críticas de estado)
+// Função para salvar no DB e transmitir (agora filtra UPDATE_STATE)
 function saveConfigAndBroadcast(type: string, payload: any) {
-  broadcastOnly(type, payload);
+  // Envia UPDATE_STATE apenas para clientes web, outros tipos para todos
+  broadcastOnly(type, payload, type === 'UPDATE_STATE' ? 'web' : 'all');
   saveConfig(); // Chamada para salvar no DB (assíncrona)
 }
 
@@ -435,8 +457,8 @@ let mainTick: NodeJS.Timeout | null = null;
 let recoveryTick: NodeJS.Timeout | null = null;
 
 function stopAllTimers() {
-  if (mainTick) clearInterval(mainTick);
-  if (recoveryTick) clearInterval(recoveryTick);
+  if (mainTick) clearInterval(mainTick!);
+  if (recoveryTick) clearInterval(recoveryTick!);
   mainTick = null;
   recoveryTick = null;
 }
@@ -463,21 +485,19 @@ function startMainTimer(seconds = 180) {
   state.mainTimer = seconds;
   state.mainStatus = "running";
   
-  // 1. Envia comando LED para Luta Iniciada (BRANCO)
   broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_RUNNING" }); 
   
-  // 2. Salva o estado crítico no DB apenas UMA VEZ ao iniciar
-  saveConfigAndBroadcast("UPDATE_STATE", { state });
+  // [CORREÇÃO APLICADA]: Apenas salva no DB e envia UPDATE_STATE APENAS para web.
+  saveConfig();
+  broadcastOnly("UPDATE_STATE", { state }, 'web');
   
-  // Apenas transmite o tick no intervalo (muito mais leve!)
   mainTick = setInterval(() => {
     if (state.mainStatus !== "running") return;
     state.mainTimer = Math.max(0, state.mainTimer - 1);
     
-    // CORREÇÃO: Usa broadcastOnly para evitar I/O de DB a cada segundo
-    broadcastOnly("UPDATE_STATE", { state }); 
+    // Isso já está filtrado para 'web' (corrigido em passos anteriores)
+    broadcastOnly("UPDATE_STATE", { state }, 'web'); 
     
-    // Salva no DB a cada 10 segundos para persistência, se não for 0.
     if (state.mainTimer > 0 && state.mainTimer % 10 === 0) saveConfig();
 
     if (state.mainTimer === 0) endMatchNow();
@@ -488,7 +508,7 @@ function startMainTimer(seconds = 180) {
 function startRecoveryTimer(seconds = 10, resume = false) {
   if (!resume && state.mainStatus === "running") {
     state.mainStatus = "paused";
-    if (mainTick) clearInterval(mainTick);
+    if (mainTick) clearInterval(mainTick!);
   }
 
   if (recoveryTick) clearInterval(recoveryTick);
@@ -496,23 +516,27 @@ function startRecoveryTimer(seconds = 10, resume = false) {
   state.recoveryPaused = false;
   state.recoveryTimer = seconds;
   
-  // Envia comando LED para Pausa/Recuperação (VERMELHO)
   broadcastOnly("LED_COMMAND", { command: "STATE_RECOVERY_ACTIVE" }); 
   
-  // Salva o estado crítico no DB ao iniciar o recovery
-  saveConfigAndBroadcast("UPDATE_STATE", { state });
+  // [CORREÇÃO APLICADA]: Apenas salva no DB e envia UPDATE_STATE APENAS para web.
+  saveConfig();
+  broadcastOnly("UPDATE_STATE", { state }, 'web');
 
   recoveryTick = setInterval(() => {
     if (state.recoveryPaused) return;
 
     state.recoveryTimer = Math.max(0, state.recoveryTimer - 1);
-    broadcastOnly("UPDATE_STATE", { state }); // Usa broadcastOnly no tick
+    // Isso já está filtrado para 'web' (corrigido em passos anteriores)
+    broadcastOnly("UPDATE_STATE", { state }, 'web'); 
 
     if (state.recoveryTimer === 0) {
       clearInterval(recoveryTick!);
-      state.recoveryActive = false; // Corrigido: deve ser false ao terminar o timer
+      state.recoveryActive = false;
       state.recoveryPaused = false;
-      saveConfigAndBroadcast("UPDATE_STATE", { state }); 
+      
+      // Garante que o estado final do recovery seja salvo e enviado filtrado
+      saveConfig();
+      broadcastOnly("UPDATE_STATE", { state }, 'web');
 
       if (state.mainTimer > 0) startMainTimer(state.mainTimer);
       else endMatchNow();
@@ -526,10 +550,11 @@ function endMatchNow() {
   state.mainStatus = "finished";
   state.recoveryActive = false;
   
-  // Transmite fim da luta (VERMELHO) - caso o cronômetro chegue a zero
   broadcastOnly("LED_COMMAND", { command: "STATE_FIGHT_ENDED" });
   
-  saveConfigAndBroadcast("UPDATE_STATE", { state }); 
+  // [CORREÇÃO APLICADA]: Apenas salva no DB e envia UPDATE_STATE APENAS para web.
+  saveConfig();
+  broadcastOnly("UPDATE_STATE", { state }, 'web');
 }
 
 function authenticateToken(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -2145,14 +2170,26 @@ app.put("/robots/:id", async (req, res) => {
 
 /* ------------------ WEBSOCKET (Inalterado, usa saveConfigAndBroadcast) ------------------ */
 
-wss.on("connection", (ws) => {
-  // Envia o estado atual para o cliente que acabou de se conectar
-  ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
-  
-  // NOVO: Garante que o LED inicie no estado IDLE_NORMAL para o novo cliente
-  if (state.mainStatus === "idle" && !state.recoveryActive) {
-      ws.send(JSON.stringify({ type: "LED_COMMAND", payload: { command: "STATE_IDLE_NORMAL" } }));
-  }
+wss.on("connection", (ws: WsClient, req: express.Request) => {
+    // 1. Marca o cliente imediatamente com base na verificação
+    ws.isESP = (req as any).isESP || false; 
+
+    // O ESP não precisa do UPDATE_STATE e o cliente web precisa.
+    if (!ws.isESP) {
+      // Envia o estado completo APENAS para clientes web.
+      ws.send(JSON.stringify({ type: "UPDATE_STATE", payload: { state } }));
+    }
+
+    // Envia o comando LED para o estado atual (pacote pequeno que a ESP precisa)
+    if (state.mainStatus === "idle" && !state.recoveryActive) {
+        ws.send(JSON.stringify({ type: "LED_COMMAND", payload: { command: "STATE_IDLE_NORMAL" } }));
+    } else if (state.mainStatus === "running") {
+        ws.send(JSON.stringify({ type: "LED_COMMAND", payload: { command: "STATE_FIGHT_RUNNING" } }));
+    } else if (state.recoveryActive || state.mainStatus === "paused" || state.mainStatus === "finished") {
+        ws.send(JSON.stringify({ type: "LED_COMMAND", payload: { command: "STATE_FIGHT_PAUSED" } }));
+    } else {
+        ws.send(JSON.stringify({ type: "LED_COMMAND", payload: { command: "STATE_IDLE_NORMAL" } }));
+    }
 
 
   ws.on("message", (raw) => {
@@ -2274,5 +2311,3 @@ wss.on("connection", (ws) => {
     }
   });
 });
-
-console.log("Servidor iniciando...");
