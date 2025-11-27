@@ -1333,7 +1333,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
   }
   
   // C. Se a partida finalizada é de eliminação (interna de grupo ou Fase Final Geral)
-  else if (currentMatchInState.phase === "elimination") {
+else if (currentMatchInState.phase === "elimination") {
         
         const round = currentMatchInState.round;
         const group = currentMatchInState.group; 
@@ -1358,6 +1358,7 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
                 x.tournamentId === currentMatchInState.tournamentId
             );
             
+            // Corrige: A propagação para a próxima rodada só ocorre se houver a próxima rodada
             if (nextRoundMatches.length > 0) {
                 const queries = [];
                 for (let i = 0; i < winners.length; i++) {
@@ -1373,9 +1374,13 @@ async function finalizeMatch(id: string, scoreA: number, scoreB: number, type: '
                 await Promise.all(queries);
                 await loadStateFromDBAndBroadcast(); // Recarrega após preencher as próximas lutas
                 
-                // Tenta avançar para a próxima fase (Eliminação de Grupos ou Final).
-                if (await tryAdvanceToEliminationOrGrandFinal()) return; // AWAIT ADICIONADO
+                // A chamada de avanço global foi movida para fora deste bloco 'if'
             }
+            
+            // Tenta avançar para a próxima fase (Eliminação de Grupos ou Final).
+            // ESTA É A CORREÇÃO: Garante que a verificação do avanço total 
+            // ocorra mesmo se não houver mais rodadas internas neste grupo.
+            if (await tryAdvanceToEliminationOrGrandFinal()) return; //
         } 
   }
 
