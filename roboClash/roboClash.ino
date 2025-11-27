@@ -7,9 +7,9 @@
 const size_t WS_RX_DOC_SIZE = 4096;
 
 // ===== WIFI =====
-const char *ssid = "DIGITAL-ARTHUR";
-const char *password = "valdeci102";
-const char *arena_host = "192.168.1.130";
+const char *ssid = "teste";
+const char *password = "testeesp32";
+const char *arena_host = "192.168.137.1";
 const int arena_port = 8080;
 const char *websocket_path = "/esp";
 

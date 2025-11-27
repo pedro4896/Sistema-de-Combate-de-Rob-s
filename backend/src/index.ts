@@ -1001,102 +1001,113 @@ function checkAndGenerateGrandFinal(): boolean {
   return false;
 }
 
-// Linha 806 (aproximadamente) - Certifique-se de substituir a assinatura inteira da função.
 async function tryAdvanceToEliminationOrGrandFinal(): Promise<boolean> {
-    if (!state.tournamentId) return false;
+  if (!state.tournamentId) return false;
 
-    // 1. FORÇA RE-CÁLCULO DAS TABELAS (para garantir dados frescos)
-    const allMatchesInTournament = state.matches.filter(m => m.tournamentId === state.tournamentId);
-    state.groupTables = computeGroupTables(state.robots, allMatchesInTournament); 
-    
-    // 2. Status do Torneio e Grupos
-    const tournament = state.tournaments.find(t => t.id === state.tournamentId);
-    if (!tournament) return false;
-    
-    // CORREÇÃO CRÍTICA: Lê a flag de uso. Assume TRUE como padrão seguro para retrocompatibilidade.
-    // Prioriza explicitamente o valor FALSE se o checkbox foi desmarcado e salvo.
-    const useRepechage = tournament.useRepechage === false ? false : true; 
-    
-    const eliminationGroupLabels = Object.keys(state.groupTables || {}).filter(g => g !== 'R');
-    const hasGroups = eliminationGroupLabels.length > 0;
-    
-    // 3. Tenta gerar ou progredir a Eliminação de Grupos
-    const hasGroupEliminations = state.matches.some(m => m.phase === "elimination" && m.group !== null && m.tournamentId === state.tournamentId);
-    let isGroupEliminationFinished = !hasGroups; // Assume concluída se não há grupos
-    
-    if (hasGroups) {
-        // A. Geração: Se a fase de grupos terminou, tenta gerar a Eliminação de Grupos (se ainda não gerada)
-        const allGroupPhaseMatches = state.matches.filter(x => x.phase === "groups" && x.tournamentId === state.tournamentId);
-        if (!hasGroupEliminations) {
-            if (allGroupPhaseMatches.every(x => x.finished)) {
-                if (generateGroupEliminations()) {
-                    console.log("➡️ Partidas de eliminação interna de grupos geradas.");
-                    return true;
-                }
-            }
-        }
-        
-        // B. Progressão: Se a eliminação de grupos já existe, tenta progredir WOs.
-        if (await progressGroupEliminations()) { // AWAIT ADICIONADO
-            return true;
-        }
+  // 1 — Recalcula tabelas
+  const allMatches = state.matches.filter(m => m.tournamentId === state.tournamentId);
+  state.groupTables = computeGroupTables(state.robots, allMatches);
 
-        // Se chegou aqui, a eliminação de grupos está no último round (e talvez concluída)
-        updateGroupChampions(); 
-        isGroupEliminationFinished = state.matches.filter(m => m.phase === 'elimination' && m.group !== null && m.tournamentId === state.tournamentId).every(m => m.finished);
-    }
-    
-    // 4. Verificação de Conclusão da Repescagem
-    // Se useRepechage for FALSE, a fase é considerada CONCLUÍDA (true) automaticamente.
-    let isRepechageRequiredAndCompleted = !useRepechage; 
+  const tournament = state.tournaments.find(t => t.id === state.tournamentId);
+  if (!tournament) return false;
 
-    if (useRepechage) {
-        const allRepechageMatches = state.matches.filter(m => m.phase === "repechage" && m.tournamentId === state.tournamentId);
-        
-        // Se ativada: precisa ter partidas geradas E todas finalizadas.
-        if (allRepechageMatches.length > 0 && allRepechageMatches.every(m => m.finished)) {
-            isRepechageRequiredAndCompleted = true;
-        } else {
-            isRepechageRequiredAndCompleted = false; // Se ativada e não concluída/gerada, bloqueia o avanço.
-        }
-    }
-    
-    // 5. Verificação FINAL para gerar a Grande Final OU FINALIZAR (CORREÇÃO CRÍTICA)
-    // CHAVE FINAL: Só avança se o Requisito da Repescagem for atendido E a Eliminação de Grupos estiver concluída
-    if (isRepechageRequiredAndCompleted && isGroupEliminationFinished) {
-        // Tenta gerar a chave final
-        if (checkAndGenerateGrandFinal()) {
-            console.log("🏆 Fase final do torneio gerada.");
-            return true;
-        }
+  // 🔥 CONVERSÃO CORRETA DO VALOR
+  const useRepechage = tournament.useRepechage === true;
 
-        // CORREÇÃO: Se a geração da chave final falhou (retornou false), e todas as fases anteriores
-        // foram concluídas, isso implica que há 1 ou 0 campeões, e o torneio deve ser finalizado.
-        // Verificamos se a final JÁ EXISTE (para não finalizar se a chave já foi gerada e está em andamento).
-        const finalAlreadyExists = state.matches.some(
-            (m) => m.phase === "elimination" && m.group === null && m.round === 1 && m.tournamentId === state.tournamentId
-        );
-        
-        if (!finalAlreadyExists) {
-            // Se a final ainda não existe e a tentativa de gerar falhou (champions.length < 2),
-            // o torneio está logicamente no fim. Finalizamos.
-            await finalizeActiveTournament(); // AWAIT ADICIONADO
-            console.log("🎉 Torneio finalizado automaticamente: não há mais partidas para gerar.");
-            return true;
+  // Grupos normais (exclui repescagem)
+  const eliminationGroups = Object.keys(state.groupTables || {}).filter(g => g !== "R");
+  const hasGroups = eliminationGroups.length > 0;
+
+  // === 2 — ELIMINAÇÃO DOS GRUPOS ===
+  let isGroupEliminationFinished = !hasGroups;
+
+  const hasGroupEliminations = state.matches.some(
+    m => m.tournamentId === state.tournamentId && m.phase === "elimination" && m.group !== null
+  );
+
+  if (hasGroups) {
+    const groupMatches = state.matches.filter(
+      m => m.tournamentId === state.tournamentId && m.phase === "groups"
+    );
+
+    // A) Não existem partidas de eliminação ainda → tenta gerar
+    if (!hasGroupEliminations) {
+      const allDone = groupMatches.length > 0 && groupMatches.every(m => m.finished);
+      if (allDone) {
+        if (generateGroupEliminations()) {
+          console.log("➡️ Geração da eliminação interna dos grupos feita.");
+          return true;
         }
+      }
     }
 
-    // Lógica de Logging de Erro (para o usuário saber o que falta)
-    if (useRepechage && !isRepechageRequiredAndCompleted) {
-         console.log("⚠️ Repescagem ATIVA mas não concluída. Aguardando finalização da Repescagem.");
-    } else if (hasGroups && !isGroupEliminationFinished) {
-         console.log("⚠️ Eliminação de Grupos não concluída. Aguardando finalização das partidas pendentes.");
-    } else {
-         console.log("⚠️ Fase Final não gerada. Verifique se há robôs suficientes classificados (mínimo 2 no total) ou se todas as fases anteriores foram concluídas.");
+    // B) Tenta avançar WOs + próximos rounds
+    if (await progressGroupEliminations()) return true;
+
+    // C) Se não há mais o que gerar, verifica finalização completa dos grupos
+    updateGroupChampions();
+
+    const eliminationMatches = state.matches.filter(
+      m =>
+        m.tournamentId === state.tournamentId &&
+        m.phase === "elimination" &&
+        m.group !== null
+    );
+
+    isGroupEliminationFinished =
+      hasGroupEliminations &&
+      eliminationMatches.length > 0 &&
+      eliminationMatches.every(m => m.finished);
+  }
+
+  // === 3 — TRATAMENTO DA REPESCAGEM ===
+  // 🔥 AQUI ESTÁ A CORREÇÃO PRINCIPAL:
+  // Se o torneio NÃO usa repescagem, já considera como concluída.
+  let isRepechageRequiredAndCompleted = !useRepechage;
+
+  if (useRepechage) {
+    const repeMatches = state.matches.filter(
+      m => m.tournamentId === state.tournamentId && m.phase === "repechage"
+    );
+
+    if (repeMatches.length > 0 && repeMatches.every(m => m.finished)) {
+      isRepechageRequiredAndCompleted = true;
+    }
+  }
+
+  // === 4 — CONDIÇÃO PARA GERAR A FINAL ===
+  if (isGroupEliminationFinished && isRepechageRequiredAndCompleted) {
+    if (checkAndGenerateGrandFinal()) {
+      console.log("🏆 Final do torneio gerada.");
+      return true;
     }
 
-    return false;
+    const finalExists = state.matches.some(
+      m =>
+        m.tournamentId === state.tournamentId &&
+        m.phase === "elimination" &&
+        m.group === null &&
+        m.round === 1
+    );
+
+    if (!finalExists) {
+      await finalizeActiveTournament();
+      console.log("🎉 Torneio finalizado automaticamente.");
+      return true;
+    }
+  }
+
+  // === LOGS DE DEBUG ===
+  console.log(`📌 DEBUG:
+    - useRepechage = ${useRepechage}
+    - isGroupEliminationFinished = ${isGroupEliminationFinished}
+    - isRepechageRequiredAndCompleted = ${isRepechageRequiredAndCompleted}
+  `);
+
+  return false;
 }
+
+
 
 async function progressGroupEliminations(): Promise<boolean> {
   const groupLabels = Object.keys(state.groupTables || {});
@@ -1676,82 +1687,110 @@ app.post("/db/load", async (_req, res) => {
 });
 
 // POST: Criar Torneio (Draft)
+// POST: Criar Torneio (Draft)
 app.post("/tournaments", async (req, res) => {
-    const { name, description, image, groupCount = 2, advancePerGroup = 2, repechageAdvanceCount = 1 } = req.body;
-    const useRepechage = req.body["useRepechage"] !== undefined ? req.body["useRepechage"] : true;
-    if (!dbClient || !name) return res.status(400).json({ error: "Nome do torneio é obrigatório." });
+  const { name, description, image, groupCount = 2, advancePerGroup = 2, repechageAdvanceCount = 1 } = req.body;
 
-    const newTournamentId = uuidv4();
-    const currentDate = new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
-    
-    try {
-        await dbClient.query(
-            `INSERT INTO tournaments (id, name, description, date, image, status, advance_per_group, group_count, participating_robot_ids, repechage_robot_ids, repechage_advance_count, use_repechage) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-            [newTournamentId, name, description || null, currentDate || null, image || null, 'draft', advancePerGroup, groupCount, '[]', '[]', repechageAdvanceCount, useRepechage]
-        );
-        await loadStateFromDBAndBroadcast();
-        res.json({ ok: true, message: `Torneio "${name}" criado com sucesso (Draft).` });
-    } catch (error) {
-        console.error("❌ Erro ao criar torneio:", error);
-        res.status(500).json({ error: "Erro interno ao cadastrar o torneio." });
-    }
-});
+  // 🔥 Normalização correta da repescagem
+  let useRepechage = false;
+  if (req.body.useRepechage !== undefined) {
+    const raw = String(req.body.useRepechage).toLowerCase();
+    useRepechage = ["true", "1", "yes", "on"].includes(raw);
+  }
 
-// PUT: Editar Detalhes do Torneio (Apenas Draft)
-app.put("/tournaments/:id", async (req, res) => {
-    const { name, description, image, groupCount, advancePerGroup, repechageAdvanceCount, useRepechage } = req.body;
-    const tournamentId = req.params.id;
+  if (!dbClient || !name)
+    return res.status(400).json({ error: "Nome do torneio é obrigatório." });
 
-    if (!dbClient) return res.status(500).json({ error: "DB client not initialized" });
+  const newTournamentId = uuidv4();
+  const currentDate = new Date().toISOString().split('T')[0];
 
-    const currentTour = state.tournaments.find(t => t.id === tournamentId);
-    if (!currentTour) return res.status(404).json({ error: "Torneio não encontrado." });
-    if (currentTour.status !== 'draft') return res.status(403).json({ error: "Apenas torneios em status 'draft' podem ser editados." });
-
-    const updates = [];
-    const values = [];
-    let paramIndex = 1;
-
-    if (name !== undefined) {
-        updates.push(`name = $${paramIndex++}`);
-        values.push(name);
-    }
-    if (description !== undefined) {
-        updates.push(`description = $${paramIndex++}`);
-        values.push(description || null);
-    }
-    if (image !== undefined) {
-        updates.push(`image = $${paramIndex++}`);
-        values.push(image || null);
-    }
-    if (groupCount !== undefined) {
-        updates.push(`group_count = $${paramIndex++}`);
-        values.push(Number(groupCount));
-    }
-    if (advancePerGroup !== undefined) {
-        updates.push(`advance_per_group = $${paramIndex++}`);
-        values.push(Number(advancePerGroup));
-    }
-    if (repechageAdvanceCount !== undefined) {
-        updates.push(`repechage_advance_count = $${paramIndex++}`);
-        values.push(Number(repechageAdvanceCount));
-    }
-
-    if (updates.length > 0) {
-        values.push(tournamentId); 
-        const sql = `UPDATE tournaments SET ${updates.join(', ')} WHERE id = $${paramIndex}`;
-        await dbClient.query(sql, values);
-    }
-
-    if (useRepechage !== undefined) { // NOVO BLOCO
-        updates.push(`use_repechage = $${paramIndex++}`);
-        values.push(!!useRepechage); // Garante que seja booleano
-    }
+  try {
+    await dbClient.query(
+      `INSERT INTO tournaments (id, name, description, date, image, status, advance_per_group, group_count, participating_robot_ids, repechage_robot_ids, repechage_advance_count, use_repechage) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        newTournamentId,
+        name,
+        description || null,
+        currentDate || null,
+        image || null,
+        'draft',
+        advancePerGroup,
+        groupCount,
+        '[]',
+        '[]',
+        repechageAdvanceCount,
+        useRepechage // <-- SALVA CERTO
+      ]
+    );
 
     await loadStateFromDBAndBroadcast();
-    res.json({ ok: true, message: "Torneio atualizado." });
+    res.json({ ok: true, message: `Torneio "${name}" criado com sucesso (Draft).` });
+
+  } catch (error) {
+    console.error("❌ Erro ao criar torneio:", error);
+    res.status(500).json({ error: "Erro interno ao cadastrar o torneio." });
+  }
 });
+
+
+app.put("/tournaments/:id", async (req, res) => {
+  const {
+    name,
+    description,
+    image,
+    groupCount,
+    advancePerGroup,
+    repechageAdvanceCount,
+    useRepechage
+  } = req.body;
+
+  const tournamentId = req.params.id;
+
+  const current = state.tournaments.find(t => t.id === tournamentId);
+  if (!current)
+    return res.status(404).json({ error: "Torneio não encontrado." });
+
+  if (current.status !== "draft")
+    return res.status(403).json({ error: "Somente torneios em draft podem ser editados." });
+
+  const updates = [];
+  const values = [];
+  let idx = 1;
+
+  if (name !== undefined) { updates.push(`name = $${idx++}`); values.push(name); }
+  if (description !== undefined) { updates.push(`description = $${idx++}`); values.push(description || null); }
+  if (image !== undefined) { updates.push(`image = $${idx++}`); values.push(image || null); }
+  if (groupCount !== undefined) { updates.push(`group_count = $${idx++}`); values.push(Number(groupCount)); }
+  if (advancePerGroup !== undefined) { updates.push(`advance_per_group = $${idx++}`); values.push(Number(advancePerGroup)); }
+  if (repechageAdvanceCount !== undefined) { updates.push(`repechage_advance_count = $${idx++}`); values.push(Number(repechageAdvanceCount)); }
+
+  // 🔥 Conversão correta para boolean
+  if (useRepechage !== undefined) {
+    const normalized =
+      typeof useRepechage === "string"
+        ? ["true", "1", "yes", "on"].includes(useRepechage.toLowerCase())
+        : !!useRepechage;
+
+    updates.push(`use_repechage = $${idx++}`);
+    values.push(normalized);
+  }
+
+  if (updates.length > 0) {
+    values.push(tournamentId);
+
+    await dbClient.query(
+      `UPDATE tournaments SET ${updates.join(", ")} WHERE id = $${idx}`,
+      values
+    );
+  }
+
+  await loadStateFromDBAndBroadcast();
+  res.json({ ok: true });
+});
+
+
+
 
 // DELETE: Deletar Torneio (Apenas Draft ou Finished)
 app.delete("/tournaments/:id", async (req, res) => {
