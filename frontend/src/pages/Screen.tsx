@@ -14,12 +14,23 @@ export default function Screen() {
   }, []);
 
   const current = useMemo(() => {
-    if (!state || !state.matches) return null;
-    return (
-      state.matches.find((m: any) => m.id === state.currentMatchId) ??
-      state.matches[state.matches.length - 1]
-    );
-  }, [state]);
+      if (!state || !state.matches || state.matches.length === 0) return null;
+
+      // 1. Tenta encontrar a luta ativa (running/paused/idle with ID)
+      const activeMatch = state.matches.find((m: any) => m.id === state.currentMatchId);
+      if (activeMatch) return activeMatch;
+
+      // 2. Se não há luta ativa, procura a última luta finalizada na lista para exibir o vencedor,
+      // garantindo que o placar da luta anterior permaneça no telão.
+      for (let i = state.matches.length - 1; i >= 0; i--) {
+          const match = state.matches[i];
+          if (match.finished) {
+              return match;
+          }
+      }
+
+      return null;
+    }, [state]);
 
   if (!state)
     return (

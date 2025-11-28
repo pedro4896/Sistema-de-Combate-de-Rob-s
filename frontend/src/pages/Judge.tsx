@@ -17,15 +17,14 @@ export default function Judge() {
     return onMessage((m) => m.type === "UPDATE_STATE" && setState(m.payload.state));
   }, []);
 
-  // Pega a luta atual; se não houver, pega a próxima pendente
-  const current = useMemo(() => {
-    if (!state) return null;
-    return (
-      state.matches.find((m: any) => m.id === state.currentMatchId) ??
-      state.matches.find((m: any) => !m.finished) ??
-      null
-    );
-  }, [state]);
+  // Pega a luta atual. Se não houver (currentMatchId é null), retorna null.
+    const current = useMemo(() => {
+      if (!state) return null;
+      return (
+        state.matches.find((m: any) => m.id === state.currentMatchId) ??
+        null // Apenas mostra a luta ativa, ou null para limpar a tela
+      );
+    }, [state]);
 
   if (!state) {
     return (

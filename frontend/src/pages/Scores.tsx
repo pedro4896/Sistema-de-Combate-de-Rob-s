@@ -102,13 +102,12 @@ const submitResult = async () => {
   setSelectedRobotId(null);  // Reseta o robô selecionado
 };
 
-  // Pega a luta atual; se não houver, pega a próxima pendente
+// Pega a luta atual. Se não houver (currentMatchId é null), retorna null.
   const current = useMemo(() => {
     if (!state) return null;
     return (
       state.matches.find((m: any) => m.id === state.currentMatchId) ??
-      state.matches.find((m: any) => !m.finished) ??
-      null
+      null // Apenas mostra a luta ativa, ou null para limpar a tela
     );
   }, [state]);
 
