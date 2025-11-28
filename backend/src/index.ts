@@ -720,7 +720,7 @@ function computeGroupTables(robots: Robot[] = state.robots, matches: Match[] = s
 /**
  * Gera as partidas de repescagem a partir dos robôs selecionados manualmente.
  */
-function generateRepechageMatches(): boolean {
+async function generateRepechageMatches(): Promise<boolean> {
   if (!state.tournamentId || !dbClient) return false;
   
   const tournament = state.tournaments.find(t => t.id === state.tournamentId);
@@ -738,8 +738,9 @@ function generateRepechageMatches(): boolean {
       return false; // Não há robôs suficientes para a repescagem
   }
 
-  // Limpa partidas antigas de repescagem
-  dbClient.query("DELETE FROM matches WHERE tournament_id = $1 AND phase = $2", [state.tournamentId, 'repechage']);
+  // CORREÇÃO 2: Adicionado 'await' para garantir que a operação de DB seja concluída 
+  // e tratar possíveis erros, prevenindo "unhandled rejections".
+  await dbClient.query("DELETE FROM matches WHERE tournament_id = $1 AND phase = $2", [state.tournamentId, 'repechage']);
 
   // Prepara para usar a lógica Round-Robin (todos contra todos)
   const repechageGroup = [repechageParticipants];
@@ -785,7 +786,7 @@ function generateRepechageMatches(): boolean {
   }
 
   if (newMatches.length > 0) {
-    insertMatches(newMatches); 
+    await insertMatches(newMatches); 
     return true;
   }
   
@@ -1549,13 +1550,39 @@ async function loadTournamentData(tournamentId: string) {
     }));
     
     // 2. Calculate group tables based on the fetched matches
-    // Correção: Se não houver matches (torneio recém-gerado), a tabela ainda é gerada com 0 pontos.
     const matchesForTables = matches.filter(m => m.phase === 'groups' || m.phase === 'repechage');
     const groupTables = computeGroupTables(robots, matchesForTables);
+    
+    // 3. Determinar o vencedor final (Overall Winner) e Vencedor da Repescagem
+    let overallWinner: Robot | null = null;
+    let repechageWinner: Robot | null = null;
+    
+    const finalEliminationMatches = matches.filter(m => m.phase === 'elimination' && m.group === null).sort((a, b) => b.round - a.round);
+    
+    if (finalEliminationMatches.length > 0) {
+        // O vencedor é o winner da última partida da última rodada da Fase Final Geral
+        const finalMatch = finalEliminationMatches[0];
+        if (finalMatch.finished) {
+            overallWinner = finalMatch.winner;
+        }
+    }
+    
+    // O vencedor da repescagem é o primeiro classificado do grupo 'R'
+    const repechageTable = groupTables['R'];
+    if (repechageTable && repechageTable.length > 0 && tournament.repechageAdvanceCount > 0) {
+        const topRepechageRobotId = repechageTable[0].robotId;
+        repechageWinner = robots.find(r => r.id === topRepechageRobotId) || null;
+    }
+    
+    // 4. Cria o objeto de torneio a ser enviado ao frontend, incluindo os novos campos
+    const tournamentData: Tournament = {
+        ...tournament,
+        overallWinner, // NOVO
+        repechageWinner, // NOVO
+    }
 
-    return { matches, groupTables, tournament };
+    return { matches, groupTables, tournament: tournamentData };
 }
-
 /* ------------------ ENDPOINTS ------------------ */
 
 // NOVO ENDPOINT: Rota para buscar dados de QUALQUER torneio (usado pelo Bracket.tsx)
@@ -1570,7 +1597,7 @@ app.get("/tournaments/:id/data", async (req, res) => {
         ok: true, 
         matches: data.matches,
         groupTables: data.groupTables,
-        tournament: data.tournament,
+        tournament: data.tournament, // Agora inclui overallWinner e repechageWinner
         currentMatchId: state.currentMatchId,
         mainStatus: state.mainStatus,
         advancePerGroup: state.advancePerGroup,
@@ -1879,45 +1906,60 @@ app.post("/tournaments/:id/set-repechage-robots", async (req, res) => {
 });
 
 // NOVO POST: Gerar Partidas de Repescagem (acionado manualmente)
-app.post("/tournaments/:id/generate-repechage", async (req, res) => {
-    const tournamentId = req.params.id;
-    if (!dbClient) return res.status(500).json({ ok: false, error: "DB client not initialized" });
 
-    const currentTour = state.tournaments.find(t => t.id === tournamentId);
-    if (!currentTour) return res.status(404).json({ ok: false, error: "Torneio não encontrado." });
-    if (currentTour.status !== 'active') return res.status(403).json({ ok: false, error: "Apenas torneios ativos podem gerar partidas." });
+// backend/src/index.ts
 
-    const existingRepechageMatches = state.matches.filter(m => m.tournamentId === tournamentId && m.phase === 'repechage');
-    if (existingRepechageMatches.length > 0) {
-        return res.status(403).json({ ok: false, error: "Partidas de repescagem já existem." });
-    }
+// ... (cerca da linha 1245)
 
-    const groupMatches = state.matches.filter(m => m.tournamentId === tournamentId && m.phase === 'groups');
-    if (groupMatches.length > 0 && !groupMatches.every(m => m.finished)) {
-        return res.status(403).json({ ok: false, error: "A fase de grupos deve estar concluída antes de gerar a repescagem." });
-    }
-    
-    // Temporariamente define o torneio como ativo no estado global (necessário para generateRepechageMatches)
-    const originalTournamentId = state.tournamentId;
-    state.tournamentId = tournamentId;
+// NOVO POST: Gerar Partidas de Repescagem (acionado manualmente)
+app.post("/tournaments/:id/generate-repechage", authenticateToken, async (req, res) => {
+    try {
+        const tournamentId = req.params.id;
+        if (!dbClient) return res.status(500).json({ ok: false, error: "DB client not initialized" });
 
-    const result = generateRepechageMatches();
+        const currentTour = state.tournaments.find(t => t.id === tournamentId);
+        if (!currentTour) return res.status(404).json({ ok: false, error: "Torneio não encontrado." });
 
-    // Restaura o ID do torneio ativo
-    state.tournamentId = originalTournamentId;
+        // MUDANÇA 1: De 403 para 400. Status do torneio deve ser 'active'.
+        if (currentTour.status !== 'active') return res.status(400).json({ ok: false, error: "Apenas torneios ativos podem gerar partidas." });
 
-    if (result) {
-        // Define a primeira partida de repescagem como a próxima a ser jogada
-        const nextMatch = state.matches.find(m => m.tournamentId === tournamentId && m.phase === 'repechage' && !m.finished);
-        setCurrentMatch(nextMatch?.id ?? null);
-        saveConfigAndBroadcast("UPDATE_STATE", { state });
+        const existingRepechageMatches = state.matches.filter(m => m.tournamentId === tournamentId && m.phase === 'repechage');
+        // MUDANÇA 2: De 403 para 400. Não é possível gerar se partidas já existem.
+        if (existingRepechageMatches.length > 0) {
+            return res.status(400).json({ ok: false, error: "Partidas de repescagem já existem." });
+        }
 
-        res.json({ ok: true, message: "Chaveamento de repescagem gerado com sucesso." });
-    } else {
-        res.status(400).json({ ok: false, error: "Não foi possível gerar o chaveamento de repescagem. Verifique se há robôs selecionados e em número suficiente (mínimo 2)." });
+        const groupMatches = state.matches.filter(m => m.tournamentId === tournamentId && m.phase === 'groups');
+        // MUDANÇA 3: De 403 para 400. Condição para só deixar gerar se a fase de grupos for encerrada.
+        if (groupMatches.length > 0 && !groupMatches.every(m => m.finished)) {
+            return res.status(400).json({ ok: false, error: "A fase de grupos deve estar concluída antes de gerar a repescagem." });
+        }
+        
+        // Temporariamente define o torneio como ativo no estado global (necessário para generateRepechageMatches)
+        const originalTournamentId = state.tournamentId;
+        state.tournamentId = tournamentId;
+
+        const result = await generateRepechageMatches();
+
+        // Restaura o ID do torneio ativo
+        state.tournamentId = originalTournamentId;
+
+        if (result) {
+            // Define a primeira partida de repescagem como a próxima a ser jogada
+            const nextMatch = state.matches.find(m => m.tournamentId === tournamentId && m.phase === 'repechage' && !m.finished);
+            setCurrentMatch(nextMatch?.id ?? null);
+            saveConfigAndBroadcast("UPDATE_STATE", { state });
+
+            res.json({ ok: true, message: "Chaveamento de repescagem gerado com sucesso." });
+        } else {
+            res.status(400).json({ ok: false, error: "Não foi possível gerar o chaveamento de repescagem. Verifique se há robôs selecionados e em número suficiente (mínimo 2)." });
+        }
+    } catch (error) {
+        console.error("❌ Erro inesperado ao gerar repescagem:", error);
+        // Mantém 500 para erros CRÍTICOS não previstos (como falha de DB)
+        res.status(500).json({ ok: false, error: "Erro interno do servidor ao gerar o chaveamento. Por favor, verifique o console do backend." });
     }
 });
-
 
 // POST: Ativar Torneio (que também gera o chaveamento inicial)
 app.post("/tournaments/:id/activate", async (req, res) => {

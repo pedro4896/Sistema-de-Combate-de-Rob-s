@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { onMessage } from "../ws";
-import { Trophy, Swords, Settings, Play } from "lucide-react";
+import { Trophy, Swords, Settings, Play, AlertTriangle, CheckCircle, Award } from "lucide-react"; // Adicionado Award
 import type { GroupTableItem } from "../../../backend/src/types";
 import toast from "react-hot-toast";
 
@@ -20,7 +20,7 @@ type Match = {
   type: 'normal' | 'KO' | 'WO'; 
   tournamentId: string; 
 };
-type Robot = { id: string; name: string; team: string; };
+type Robot = { id: string; name: string; team: string; image?: string; }; // Adicionado image
 type Tournament = { 
   id: string; 
   name: string; 
@@ -29,6 +29,9 @@ type Tournament = {
   groupCount: number; 
   participatingRobots?: Robot[]; 
   repechageWinner?: Robot | null; // NOVO: Vencedor da repescagem
+  useRepechage: boolean; // ADICIONADO
+  repechageRobotIds?: string[]; // ADICIONADO
+  overallWinner?: Robot | null; // NOVO: Vencedor final (para o pódio)
 };
 type ArenaState = {
     robots: Robot[];
@@ -40,6 +43,28 @@ type ArenaState = {
     mainStatus: string;
     // ... outros campos
 };
+
+// Componente para exibir o Pódio (Novo)
+const Podium = ({ winner, tournamentName }: { winner: Robot, tournamentName: string }) => (
+    <div className="bg-yellow-800/50 border-2 border-yellow-400 p-8 rounded-2xl shadow-2xl mb-10 max-w-lg mx-auto text-center animate-fadeIn">
+        <h2 className="text-3xl font-extrabold text-yellow-300 flex items-center justify-center gap-4 mb-4">
+            <Trophy size={32} /> CAMPEÃO DO TORNEIO {tournamentName.toUpperCase()}!
+        </h2>
+        <div className="flex flex-col items-center">
+            {/* Se houver imagem (assumindo que o campo image do Robot é o URL/Base64) */}
+            {winner.image && (
+                <img 
+                    src={winner.image} 
+                    alt={`Imagem do Robô ${winner.name}`} 
+                    className="w-32 h-32 object-cover rounded-full border-4 border-yellow-400 mb-4" 
+                />
+            )}
+            <h3 className="text-4xl font-black text-white">{winner.name}</h3>
+            <p className="text-xl text-yellow-100">Parabéns!</p>
+        </div>
+    </div>
+);
+
 
 export default function Chaveamento() {
   const [state, setState] = useState<ArenaState | null>(null);
@@ -60,6 +85,7 @@ export default function Chaveamento() {
   // NOVO FLUXO DE BUSCA DE DADOS
   const fetchTournamentData = async (tourId: string, globalState: any) => {
     setLoading(true);
+    // Chama o novo endpoint que retorna dados específicos do torneio
     const result = await api(`/tournaments/${tourId}/data`);
     
     if (result.ok) {
@@ -76,9 +102,11 @@ export default function Chaveamento() {
             mainStatus: result.mainStatus,
         } as ArenaState);
 
-        // Atualiza o torneio exibido com todos os detalhes (incluindo repechageWinner)
+        // Atualiza o torneio exibido com todos os detalhes (incluindo overallWinner e repechageWinner)
         setDisplayedTournament(tourDetails);
-        setGroupCountActive(tourDetails.groupCount);
+        setGroupCountActive(tourDetails.advancePerGroup);
+        // O groupCountActive foi corrigido para usar advancePerGroup
+        // setGroupCountActive(tourDetails.groupCount); // Este campo não é usado diretamente na renderização de avanço, mas foi mantido por convenção.
         setAdvancePerGroupActive(tourDetails.advancePerGroup);
     } else {
         // Se a busca de dados falhar (ex: torneio deletado), apenas atualiza a lista de torneios
@@ -106,7 +134,15 @@ export default function Chaveamento() {
 
     if (tourToLoadId) {
         setSelectedTournamentId(tourToLoadId);
-        await fetchTournamentData(tourToLoadId, newState);
+        // Garante que o torneio a ser carregado exista na lista
+        if (allTours.some(t => t.id === tourToLoadId)) {
+             await fetchTournamentData(tourToLoadId, newState);
+        } else {
+            // Se o torneio anterior foi deletado, limpa a seleção
+            setState(newState);
+            setSelectedTournamentId(null);
+            setDisplayedTournament(null);
+        }
     } else {
         // Se não houver torneios
         setState(newState);
@@ -118,7 +154,8 @@ export default function Chaveamento() {
   // Efeito para carregar o estado inicial e configurar o listener WebSocket
   useEffect(() => {
     fetchGlobalState(null); 
-    return onMessage((m: any) => m.type === "UPDATE_STATE" && fetchGlobalState(null)); 
+    // Garante que a tela se atualize quando o estado mudar via websocket
+    return onMessage((m: any) => m.type === "UPDATE_STATE" && fetchGlobalState(selectedTournamentId)); 
   }, []); 
 
   const handleTournamentSelectChange = (id: string) => {
@@ -147,7 +184,7 @@ export default function Chaveamento() {
     const result = await api(`/tournaments/${displayedTournament.id}/activate`, { method: "POST" });
     
     if (result.ok) {
-        // O WebSocket se encarregará de chamar fetchGlobalState(null), o que carregará o novo torneio ATIVO
+        // O WebSocket se encarregará de chamar fetchGlobalState, o que carregará o novo torneio ATIVO
         toast.success(result.message);
     } else {
         toast.error(result.error || "Falha ao gerar chaveamento.");
@@ -187,16 +224,42 @@ export default function Chaveamento() {
       currentTourStatus === 'draft' && 
       (displayedTournament.participatingRobots?.length || 0) >= 2;
   
-  const groups = Object.keys(state.groupTables || {});
-  
   // Agrupamento e filtragem de partidas
   const matchesByPhase = {
     groups: state.matches.filter((m: Match) => m.phase === "groups" && m.tournamentId === selectedTournamentId),
     repechage: state.matches.filter((m: Match) => m.phase === "repechage" && m.tournamentId === selectedTournamentId).sort((a, b) => a.round - b.round),
-    eliminationGroup: state.matches.filter((m: Match) => m.phase === "elimination" && m.group && m.tournamentId === selectedTournamentId).sort((a, b) => a.round - b.round),
+    eliminationGroup: state.matches.filter((m: Match) => m.phase === "elimination" && m.group && m.group !== null && m.tournamentId === selectedTournamentId).sort((a, b) => a.round - b.round),
     eliminationFinal: state.matches.filter((m: Match) => m.phase === "elimination" && m.group === null && m.tournamentId === selectedTournamentId).sort((a, b) => a.round - b.round),
   };
+  
+  // Lógica de Grupos (incluindo 'R')
+  const allGroups = Object.keys(state.groupTables || {});
+  // CORREÇÃO 3: Filtra para obter apenas grupos regulares (A, B, C, ...)
+  const regularGroups = allGroups.filter(g => g !== 'R'); 
+  // Determina se o grupo 'R' existe na tabela
+  const hasRepechageGroup = allGroups.includes('R'); 
 
+  const groupsToRender = [...regularGroups];
+  if (hasRepechageGroup) {
+      groupsToRender.push('R'); // Adiciona 'R' no final
+  }
+  
+  // Lógica do Aviso de Repescagem (Correção 1)
+  const allGroupMatches = matchesByPhase.groups;
+  const isGroupPhaseComplete = allGroupMatches.length > 0 && allGroupMatches.every(m => m.finished);
+  const hasGeneratedRepechage = matchesByPhase.repechage.length > 0;
+  
+  const needsRepechageGeneration = displayedTournament?.useRepechage &&
+    currentTourStatus === 'active' &&
+    isGroupPhaseComplete &&
+    !hasGeneratedRepechage &&
+    (displayedTournament as any).repechageRobotIds?.length >= 2;
+    
+  // Lógica do Pódio (Correção 2)
+  const isTournamentOver = currentTourStatus === 'finished';
+  // O winner final é obtido diretamente do displayedTournament (atualizado no fetch)
+  const overallWinner = displayedTournament?.overallWinner;
+  
   const colors = [
     "from-blue-900 to-blue-700",
     "from-green-900 to-green-700",
@@ -222,7 +285,7 @@ export default function Chaveamento() {
         
         {m.finished ? (
           <div className="flex items-center gap-2">
-            <span className="text-sm text-yellow-400 font-semibold">
+            <span className={`text-sm font-semibold ${m.winner ? 'text-yellow-400' : 'text-gray-400'}`}>
               {m.winner
                 ? `Vencedor: ${m.winner.name} ${
                       m.type === "KO"
@@ -303,125 +366,154 @@ export default function Chaveamento() {
              <p className="text-sm text-red-400 mt-2">⚠️ Torneio em DRAFT: Adicione pelo menos 2 robôs na página **Torneios** para habilitar a geração.</p>
         )}
       </div>
-
+      
+      {/* ---------- AVISO DE REPESCAGEM (Correção 1) ---------- */}
+      {needsRepechageGeneration && (
+          <div className="bg-orange-600/30 border border-orange-400 p-4 rounded-lg shadow-md mb-8 max-w-4xl mx-auto text-center animate-pulse">
+              <span className="text-xl font-bold text-orange-300 flex items-center justify-center gap-2">
+                  <AlertTriangle /> REPESCAGEM PENDENTE
+              </span>
+              <p className="text-sm text-white/70">
+                  A Fase de Grupos foi concluída. Vá para a página **Torneios** e use o botão **Gerenciar Repescagem** para gerar as partidas e continuar o torneio.
+              </p>
+          </div>
+      )}
+      
+      {/* ---------- PÓDIO (Correção 2) ---------- */}
+      {isTournamentOver && overallWinner && (
+          <Podium winner={overallWinner} tournamentName={displayedTournament?.name || "Finalizado"} />
+      )}
+      
       {/* Exibição do Vencedor da Repescagem (NOVO) */}
       {repechageWinner && (
           <div className="bg-purple-600/30 border border-purple-400 p-4 rounded-lg shadow-md mb-8 max-w-4xl mx-auto text-center">
               <span className="text-xl font-bold text-purple-300 flex items-center justify-center gap-2">
-                  <Trophy /> Vencedor da Repescagem: {repechageWinner.name}
+                  <CheckCircle /> Vencedor da Repescagem: **{repechageWinner.name}**
               </span>
               <p className="text-sm text-white/70">Este robô avançou para a Fase Final Geral.</p>
           </div>
       )}
 
       {/* ---------- GRUPOS E TABELAS ---------- */}
-      <h2 className="text-2xl font-bold mb-6 text-center">Fase de Grupos</h2>
-      {groups.length === 0 && (
+      <h2 className="text-2xl font-bold mb-6 text-center">Fase de Grupos e Repescagem</h2>
+      {groupsToRender.length === 0 && (
           <p className="text-white/60 text-center">O torneio não possui partidas de grupo geradas ou selecionadas.</p>
       )}
 
       <div className="grid xl:grid-cols-2 lg:grid-cols-3 gap-10">
-        {groups.map((g, idx) => (
-          <div
-            key={g}
-            className={`rounded-2xl p-6 shadow-xl bg-gradient-to-b ${
-              colors[idx % colors.length]
-            }`}
-          >
-            <h3 className="text-xl font-bold mb-4">Grupo {g}</h3>
+        {groupsToRender.map((g, idx) => {
+            
+            // CORREÇÃO 3: Lógica para tratar o grupo 'R' (Repescagem) separadamente
+            const isRepechage = g === 'R';
+            const groupMatches = isRepechage 
+                ? matchesByPhase.repechage 
+                : matchesByPhase.groups.filter((m: any) => m.group === g); 
+                
+            // Usando regularGroups.length para o cálculo de cor, pois 'R' é um grupo especial
+            const regularIndex = regularGroups.indexOf(g);
+            const colorClass = isRepechage 
+                ? 'from-purple-900 to-purple-700 border-purple-400' 
+                : colors[regularIndex % colors.length];
+                
+            // Não renderiza se for um grupo 'R' e não houver partidas geradas
+            if (isRepechage && groupMatches.length === 0) return null;
 
-            {/* ---------- TABELA ---------- */}
-            <div className="overflow-x-auto rounded-lg bg-black/20 p-2 mb-5">
-              <table className="w-full text-sm text-center">
-                <thead className="text-yellow-400 border-b border-white/20">
-                  <tr>
-                    <th>#</th>
-                    <th className="text-left pl-2">Robô</th>
-                    <th>Pontos</th>
-                    <th>Vitórias</th>
-                    <th>Empate</th>
-                    <th>Derrotas</th>
-                    <th>KO</th>
-                    <th>WO</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(state!.groupTables[g] as GroupTableItem[] | undefined)?.map(
-                    (r, idx2) => (
-                      <tr
-                        key={r.robotId}
-                        className={`border-b border-white/10 ${
-                          idx2 < advancePerGroupActive
-                            ? "text-white font-bold"
-                            : "text-white/50"
-                        }`}
-                      >
-                        <td>{idx2 + 1}</td>
-                        <td className="text-left pl-2">{r.name}</td>
-                        <td>{r.pts}</td>
-                        <td>{r.wins}</td>
-                        <td>{r.draws}</td>
-                        <td>{r.losses}</td>
-                        <td>{r.ko}</td>
-                        <td>{r.wo}</td>
-                      </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
+            // Encontrando o número de classificados para o grupo atual
+            const currentAdvanceCount = isRepechage 
+                ? displayedTournament?.repechageAdvanceCount || 1
+                : advancePerGroupActive;
 
-            {/* ---------- PARTIDAS DE GRUPO ---------- */}
-            <h4 className="flex items-center gap-2 font-bold mb-2">
-              <Swords size={18} /> Partidas de Grupo
-            </h4>
-            <div className="space-y-2">
-              {matchesByPhase.groups
-                .filter((m: any) => m.group === g)
-                .map(renderMatch)}
-            </div>
-          </div>
-        ))}
+
+            return (
+                <div
+                    key={g}
+                    // Adicionei border-2 para destacar mais
+                    className={`rounded-2xl p-6 shadow-xl bg-gradient-to-b border-2 ${colorClass}`}
+                >
+                    <h3 className="text-xl font-bold mb-4">
+                        {isRepechage ? "Grupo R (Repescagem)" : `Grupo ${g}`}
+                    </h3>
+
+                    {/* ---------- TABELA ---------- */}
+                    <div className="overflow-x-auto rounded-lg bg-black/20 p-2 mb-5">
+                        <table className="w-full text-sm text-center">
+                            <thead className="text-yellow-400 border-b border-white/20">
+                                <tr>
+                                    <th>#</th>
+                                    <th className="text-left pl-2">Robô</th>
+                                    <th>Pontos</th>
+                                    <th>Vitórias</th>
+                                    <th>Empate</th>
+                                    <th>Derrotas</th>
+                                    <th>KO</th>
+                                    <th>WO</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {/* CORREÇÃO 3: Garante que a tabela use o grupo correto */}
+                                {(state!.groupTables[g] as GroupTableItem[] | undefined)?.map(
+                                    (r, idx2) => (
+                                    <tr
+                                        key={r.robotId}
+                                        className={`border-b border-white/10 ${
+                                            // Destaque para classificados do grupo normal ou repescagem
+                                            idx2 < currentAdvanceCount
+                                                ? isRepechage 
+                                                    ? "text-purple-200 font-bold bg-purple-500/20" 
+                                                    : "text-white font-bold bg-green-500/10" 
+                                                : "text-white/50"
+                                        }`}
+                                    >
+                                        <td>{idx2 + 1}</td>
+                                        <td className="text-left pl-2">{r.name}</td>
+                                        <td>{r.pts}</td>
+                                        <td>{r.wins}</td>
+                                        <td>{r.draws}</td>
+                                        <td>{r.losses}</td>
+                                        <td>{r.ko}</td>
+                                        <td>{r.wo}</td>
+                                    </tr>
+                                    )
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* ---------- PARTIDAS DO GRUPO (Partidas de grupo OU de repescagem) ---------- */}
+                    <h4 className="flex items-center gap-2 font-bold mb-2">
+                        <Swords size={18} /> Partidas {isRepechage ? "da Repescagem" : "de Grupo"}
+                    </h4>
+                    <div className="space-y-2">
+                        {groupMatches.map(renderMatch)}
+                    </div>
+                </div>
+            );
+        })}
       </div>
 
-      {/* ---------- MATA-MATA REPESCAGEM (NOVO) ---------- */}
-      {matchesByPhase.repechage.length > 0 && (
-          <div className="mt-16 bg-purple-600/20 p-6 rounded-2xl">
-              <h2 className="text-2xl font-bold mb-6 text-center text-purple-300">
-                  ⚡ Fase de Repescagem
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-4xl mx-auto">
-                  {/* Agrupamento por Round da Repescagem */}
-                  {[...new Set(matchesByPhase.repechage.map(m => m.round))].map(round => (
-                      <div key={`rep-r${round}`} className="bg-black/20 p-4 rounded-xl">
-                          <h4 className="text-lg font-bold mb-3 text-purple-200">Round {round}</h4>
-                          <div className="space-y-2">
-                              {matchesByPhase.repechage.filter(m => m.round === round).map(renderMatch)}
-                          </div>
-                      </div>
-                  ))}
-              </div>
-          </div>
-      )}
-
-      {/* ---------- MATA-MATA POR GRUPO ---------- */}
+      {/* ---------- ELIMINAÇÃO INTERNA POR GRUPO (Apenas grupos regulares) ---------- */}
       {matchesByPhase.eliminationGroup.length > 0 && (
         <div className="mt-16">
           <h2 className="text-2xl font-bold mb-6 text-center">
             Eliminação Interna (Quartas/Semis por Grupo)
           </h2>
-          {Object.keys(state.groupTables || {}).map((label) => (
-            <div key={`elim-group-${label}`} className="mb-8 p-4 border border-white/20 rounded-xl">
-              <h3 className="text-lg font-bold mb-3 text-yellow-400">
-                Grupo {label}
-              </h3>
-              <div className="space-y-2">
-                {matchesByPhase.eliminationGroup
-                  .filter((m: any) => m.group === label)
-                  .map(renderMatch)}
-              </div>
-            </div>
-          ))}
+          {/* Mapeia apenas os grupos regulares para eliminação interna */}
+          {regularGroups.map((label) => {
+              // Filtra partidas de eliminação que pertecem ao grupo (label é 'A', 'B', etc.)
+              const matchesInGroup = matchesByPhase.eliminationGroup.filter((m: any) => m.group === label);
+              if (matchesInGroup.length === 0) return null;
+              
+              return (
+                  <div key={`elim-group-${label}`} className="mb-8 p-4 border border-white/20 rounded-xl">
+                      <h3 className="text-lg font-bold mb-3 text-yellow-400">
+                          Grupo {label}
+                      </h3>
+                      <div className="space-y-2">
+                          {matchesInGroup.map(renderMatch)}
+                      </div>
+                  </div>
+              );
+          })}
         </div>
       )}
 

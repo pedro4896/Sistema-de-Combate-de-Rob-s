@@ -56,7 +56,8 @@ const CustomAlertDialog = ({ open, title, description, action, onClose }: {
     };
 
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+        // CORREÇÃO 3: Aumentado o z-index para garantir que fique em primeiro plano
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[55]">
             <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-sm text-center shadow-2xl border border-red-400/30">
                 <h2 className="text-xl font-bold text-red-400 mb-4">{title}</h2>
                 <p className="text-white/80 mb-6">{description}</p>
@@ -155,6 +156,8 @@ export default function Tournaments() {
     }
     
     // NOVO: Atualiza selectedRepechageRobots se o modal de repescagem estiver aberto
+    // NOTA: Não é necessário atualizar managingRepechage aqui, pois o estado de desabilitar o botão
+    // de gerar chaveamento depende da propriedade `repechageRobotIds` que é alterada na função `saveRepechageRobots` (correção abaixo).
     if (managingRepechage) {
         const currentTour = s.tournaments.find((t: Tournament) => t.id === managingRepechage.id);
         if (currentTour) {
@@ -380,6 +383,12 @@ export default function Tournaments() {
 
       if (result.ok) {
           toast.success(result.message);
+          // CORREÇÃO 2: Atualizar o estado local de `managingRepechage` com os IDs selecionados
+          // Isso garante que o botão de gerar chaveamento seja habilitado sem precisar fechar o modal.
+          setManagingRepechage(prev => ({
+              ...prev!,
+              repechageRobotIds: selectedRepechageRobots,
+          }));
           // Não fecha o modal, apenas salva a lista
       } else {
           toast.error(result.error || "Falha ao salvar a lista de repescagem.");
@@ -389,6 +398,8 @@ export default function Tournaments() {
   const generateRepechage = (id: string, name: string) => {
       const currentTour = state.tournaments.find(t => t.id === id);
       
+      // A condição de verificação agora usa managingRepechage.repechageRobotIds,
+      // que é atualizada imediatamente após salvar (Correção 2).
       if (!currentTour || (currentTour.repechageRobotIds?.length || 0) < 2) {
           toast.error("Selecione e salve pelo menos 2 robôs para a repescagem antes de gerar o chaveamento.");
           return;
@@ -420,8 +431,6 @@ export default function Tournaments() {
           }
       });
   };
-  // --- FIM LÓGICA DE REPESCAGEM ---
-
 
   return (
     <div className="p-8">
@@ -872,7 +881,8 @@ export default function Tournaments() {
       {/* === MODAL DE GERENCIAMENTO DE REPESCAGEM === */}
       {managingRepechage && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-lg shadow-2xl border border-purple-400/30">
+          {/* CORREÇÃO 1: Adicionado altura máxima e rolagem para enquadramento em telas menores */}
+          <div className="bg-[#001933] p-8 rounded-2xl w-full max-w-lg shadow-2xl border border-purple-400/30 max-h-[90vh] overflow-y-auto">
             <h2 className="text-2xl font-bold text-purple-400 mb-4">
               Repescagem para "{managingRepechage.name}"
             </h2>
@@ -939,15 +949,20 @@ export default function Tournaments() {
               <div className="border-t border-white/20 pt-4">
                   <h3 className="text-lg font-bold text-white mb-2 text-left">2. Gerar Partidas</h3>
                   <p className="text-sm text-white/70 mb-4 text-left">
-                      {state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
-                          <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> O chaveamento da repescagem JÁ FOI GERADO.</span> :
-                          `Gere o chaveamento Round-Robin depois que a Fase de Grupos terminar. ${managingRepechage.repechageAdvanceCount} robô(s) será(ão) classificado(s) para a Fase Final.`
+                      {/* A verificação agora é mais robusta, pois managingRepechage.repechageRobotIds é atualizada na etapa 1 */}
+                      {managingRepechage.repechageRobotIds && managingRepechage.repechageRobotIds.length > 0 && !state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
+                        `Pronto! Gere o chaveamento Round-Robin depois que a Fase de Grupos terminar. ${managingRepechage.repechageAdvanceCount} robô(s) será(ão) classificado(s) para a Fase Final.`
+                        : managingRepechage.repechageRobotIds && managingRepechage.repechageRobotIds.length < 2 ?
+                            <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> Selecione e **salve** no mínimo 2 robôs para a repescagem.</span>
+                        : state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
+                          <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> O chaveamento da repescagem JÁ FOI GERADO.</span>
+                        : `Gere o chaveamento Round-Robin depois que a Fase de Grupos terminar. ${managingRepechage.repechageAdvanceCount} robô(s) será(ão) classificado(s) para a Fase Final.`
                       }
                   </p>
                   <button
                       onClick={() => generateRepechage(managingRepechage.id, managingRepechage.name)}
                       className={`w-full px-4 py-2 text-black font-bold rounded-lg transition flex items-center justify-center gap-2 ${
-                          (managingRepechage.repechageRobotIds?.length || 0) < 2 || state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id)
+                          (managingRepechage.repechageRobotIds?.length || 0) < 2 || loading || state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id)
                           ? 'bg-gray-500 cursor-not-allowed' 
                           : 'bg-green-600 hover:bg-green-500'
                       }`}
