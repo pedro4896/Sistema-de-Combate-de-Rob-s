@@ -17,9 +17,9 @@ export default function Scores() {
   const [state, setState] = useState<any>(null);
   const [match, setMatch] = useState<any>(null);
   const [judges, setJudges] = useState([
-    { judgeId: "J1", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
-    { judgeId: "J2", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
-    { judgeId: "J3", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
+    { judgeId: "André Barbosa", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
+    { judgeId: "Henrique Patriota", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
+    { judgeId: "Waldemar Neto", damageA: 0, hitsA: 0, damageB: 0, hitsB: 0 },
   ]);
   const [showModal, setShowModal] = useState(false);
   const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);

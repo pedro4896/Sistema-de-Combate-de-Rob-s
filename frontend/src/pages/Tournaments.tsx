@@ -23,6 +23,9 @@ type Tournament = {
   repechageWinner?: Robot | null;
   repechageAdvanceCount: number; 
   useRepechage: boolean; // ADICIONADO: Flag para indicar o uso de repescagem
+  overallWinner?: Robot | null; // Vencedor final (para o pódio)
+  secondPlace?: Robot | null; // Adicionado para o 2º lugar
+  thirdPlace?: Robot | null;  // Adicionado para o 3º lugar
 };
 type ArenaState = {
     robots: Robot[];
@@ -953,7 +956,7 @@ export default function Tournaments() {
                       {managingRepechage.repechageRobotIds && managingRepechage.repechageRobotIds.length > 0 && !state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
                         `Pronto! Gere o chaveamento Round-Robin depois que a Fase de Grupos terminar. ${managingRepechage.repechageAdvanceCount} robô(s) será(ão) classificado(s) para a Fase Final.`
                         : managingRepechage.repechageRobotIds && managingRepechage.repechageRobotIds.length < 2 ?
-                            <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> Selecione e **salve** no mínimo 2 robôs para a repescagem.</span>
+                            <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> Selecione e <strong>salve</strong> no mínimo 2 robôs para a repescagem.</span>
                         : state.matches.some(m => m.phase === 'repechage' && m.tournamentId === managingRepechage.id) ?
                           <span className="text-red-400 font-bold flex items-center gap-2"><X size={18} /> O chaveamento da repescagem JÁ FOI GERADO.</span>
                         : `Gere o chaveamento Round-Robin depois que a Fase de Grupos terminar. ${managingRepechage.repechageAdvanceCount} robô(s) será(ão) classificado(s) para a Fase Final.`

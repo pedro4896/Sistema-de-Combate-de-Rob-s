@@ -21,6 +21,7 @@ type Match = {
   tournamentId: string; 
 };
 type Robot = { id: string; name: string; team: string; image?: string; }; // Adicionado image
+
 type Tournament = { 
   id: string; 
   name: string; 
@@ -32,6 +33,8 @@ type Tournament = {
   useRepechage: boolean; // ADICIONADO
   repechageRobotIds?: string[]; // ADICIONADO
   overallWinner?: Robot | null; // NOVO: Vencedor final (para o pódio)
+  secondPlace?: Robot | null; // NOVO: 2º Lugar
+  thirdPlace?: Robot | null;  // NOVO: 3º Lugar
 };
 type ArenaState = {
     robots: Robot[];
@@ -44,26 +47,91 @@ type ArenaState = {
     // ... outros campos
 };
 
-// Componente para exibir o Pódio (Novo)
-const Podium = ({ winner, tournamentName }: { winner: Robot, tournamentName: string }) => (
-    <div className="bg-yellow-800/50 border-2 border-yellow-400 p-8 rounded-2xl shadow-2xl mb-10 max-w-lg mx-auto text-center animate-fadeIn">
-        <h2 className="text-3xl font-extrabold text-yellow-300 flex items-center justify-center gap-4 mb-4">
-            <Trophy size={32} /> CAMPEÃO DO TORNEIO {tournamentName.toUpperCase()}!
-        </h2>
-        <div className="flex flex-col items-center">
-            {/* Se houver imagem (assumindo que o campo image do Robot é o URL/Base64) */}
-            {winner.image && (
-                <img 
-                    src={winner.image} 
-                    alt={`Imagem do Robô ${winner.name}`} 
-                    className="w-32 h-32 object-cover rounded-full border-4 border-yellow-400 mb-4" 
-                />
-            )}
-            <h3 className="text-4xl font-black text-white">{winner.name}</h3>
-            <p className="text-xl text-yellow-100">Parabéns!</p>
+// Componente para exibir o Robô em uma posição do pódio (NOVO)
+const PodiumPlace = ({ place, winner, rankIcon, bgColor, borderColor, size, textSize, fontWeight }: {
+    place: number,
+    winner: Robot | null,
+    rankIcon: React.ReactNode,
+    bgColor: string,
+    borderColor: string,
+    size: string,
+    textSize: string,
+    fontWeight: string,
+}) => {
+    if (!winner) return null;
+    return (
+        <div className={`flex flex-col items-center justify-end ${size} p-4 text-center ${bgColor} ${borderColor} rounded-t-lg shadow-xl transition-all duration-500 hover:scale-[1.02] cursor-default`}>
+            <div className={`text-4xl ${fontWeight} text-white mb-2 flex items-center gap-2`}>
+                {rankIcon} {place}º Lugar
+            </div>
+            <div className="flex flex-col items-center">
+                {winner.image && (
+                    <img 
+                        src={winner.image} 
+                        alt={`Imagem do Robô ${winner.name}`} 
+                        className="w-16 h-16 md:w-24 md:h-24 object-cover rounded-full border-4 border-white mb-2" 
+                    />
+                )}
+                <h3 className={`${textSize} ${fontWeight} text-white leading-tight`}>{winner.name}</h3>
+                <p className="text-sm text-white/80">{winner.team}</p>
+            </div>
         </div>
-    </div>
-);
+    );
+};
+
+// Componente principal para exibir o Pódio (ATUALIZADO)
+const Podium = ({ tournament }: { tournament: Tournament }) => {
+    const { overallWinner, secondPlace, thirdPlace, name } = tournament;
+
+    // Se não houver vencedor geral, não mostra o pódio.
+    if (!overallWinner) return null;
+
+    return (
+        <div className="mb-12 max-w-4xl mx-auto text-center">
+            <h2 className="text-3xl font-extrabold text-yellow-400 mb-6 flex items-center justify-center gap-4">
+                <Trophy size={32} /> Pódio do Torneio {name.toUpperCase()}
+            </h2>
+            <div className="flex justify-center items-end gap-2 md:gap-4 lg:gap-8">
+                
+                {/* 3º Lugar (Bronze) - Exibido à esquerda */}
+                <PodiumPlace
+                    place={3}
+                    winner={thirdPlace}
+                    rankIcon={<Award size={20} className="text-amber-500" />}
+                    bgColor="bg-amber-800/80"
+                    borderColor="border-amber-500"
+                    size="w-24 md:w-32 h-40 md:h-56 border-2"
+                    textSize="text-lg md:text-xl"
+                    fontWeight="font-semibold"
+                />
+
+                {/* 1º Lugar (Ouro) - Exibido ao centro e maior */}
+                <PodiumPlace
+                    place={1}
+                    winner={overallWinner}
+                    rankIcon={<Trophy size={24} className="text-yellow-300" />}
+                    bgColor="bg-yellow-900/90"
+                    borderColor="border-yellow-300"
+                    size="w-32 md:w-48 h-56 md:h-72 border-4"
+                    textSize="text-xl md:text-2xl"
+                    fontWeight="font-black"
+                />
+
+                {/* 2º Lugar (Prata) - Exibido à direita */}
+                <PodiumPlace
+                    place={2}
+                    winner={secondPlace}
+                    rankIcon={<Award size={20} className="text-gray-300" />}
+                    bgColor="bg-gray-800/80"
+                    borderColor="border-gray-300"
+                    size="w-24 md:w-32 h-48 md:h-64 border-2"
+                    textSize="text-lg md:text-xl"
+                    fontWeight="font-semibold"
+                />
+            </div>
+        </div>
+    );
+};
 
 
 export default function Chaveamento() {
@@ -234,7 +302,7 @@ export default function Chaveamento() {
   
   // Lógica de Grupos (incluindo 'R')
   const allGroups = Object.keys(state.groupTables || {});
-  // CORREÇÃO 3: Filtra para obter apenas grupos regulares (A, B, C, ...)
+  // CORREÇÃO: Filtra para obter apenas grupos regulares (A, B, C, ...)
   const regularGroups = allGroups.filter(g => g !== 'R'); 
   // Determina se o grupo 'R' existe na tabela
   const hasRepechageGroup = allGroups.includes('R'); 
@@ -244,7 +312,7 @@ export default function Chaveamento() {
       groupsToRender.push('R'); // Adiciona 'R' no final
   }
   
-  // Lógica do Aviso de Repescagem (Correção 1)
+  // Lógica do Aviso de Repescagem 
   const allGroupMatches = matchesByPhase.groups;
   const isGroupPhaseComplete = allGroupMatches.length > 0 && allGroupMatches.every(m => m.finished);
   const hasGeneratedRepechage = matchesByPhase.repechage.length > 0;
@@ -255,10 +323,9 @@ export default function Chaveamento() {
     !hasGeneratedRepechage &&
     (displayedTournament as any).repechageRobotIds?.length >= 2;
     
-  // Lógica do Pódio (Correção 2)
+  // Lógica do Pódio (Agora usa o displayedTournament com os 3 lugares)
   const isTournamentOver = currentTourStatus === 'finished';
-  // O winner final é obtido diretamente do displayedTournament (atualizado no fetch)
-  const overallWinner = displayedTournament?.overallWinner;
+  // O pódio completo é passado para o novo componente Podium
   
   const colors = [
     "from-blue-900 to-blue-700",
@@ -367,7 +434,7 @@ export default function Chaveamento() {
         )}
       </div>
       
-      {/* ---------- AVISO DE REPESCAGEM (Correção 1) ---------- */}
+      {/* ---------- AVISO DE REPESCAGEM ---------- */}
       {needsRepechageGeneration && (
           <div className="bg-orange-600/30 border border-orange-400 p-4 rounded-lg shadow-md mb-8 max-w-4xl mx-auto text-center animate-pulse">
               <span className="text-xl font-bold text-orange-300 flex items-center justify-center gap-2">
@@ -379,16 +446,16 @@ export default function Chaveamento() {
           </div>
       )}
       
-      {/* ---------- PÓDIO (Correção 2) ---------- */}
-      {isTournamentOver && overallWinner && (
-          <Podium winner={overallWinner} tournamentName={displayedTournament?.name || "Finalizado"} />
+      {/* ---------- PÓDIO (AGORA COMPLETO) ---------- */}
+      {isTournamentOver && displayedTournament && (displayedTournament.overallWinner || displayedTournament.secondPlace || displayedTournament.thirdPlace) && (
+          <Podium tournament={displayedTournament} />
       )}
       
       {/* Exibição do Vencedor da Repescagem (NOVO) */}
       {repechageWinner && (
           <div className="bg-purple-600/30 border border-purple-400 p-4 rounded-lg shadow-md mb-8 max-w-4xl mx-auto text-center">
               <span className="text-xl font-bold text-purple-300 flex items-center justify-center gap-2">
-                  <CheckCircle /> Vencedor da Repescagem: **{repechageWinner.name}**
+                  <CheckCircle /> Vencedor da Repescagem: <strong>{repechageWinner.name}</strong>
               </span>
               <p className="text-sm text-white/70">Este robô avançou para a Fase Final Geral.</p>
           </div>
@@ -403,7 +470,7 @@ export default function Chaveamento() {
       <div className="grid xl:grid-cols-2 lg:grid-cols-3 gap-10">
         {groupsToRender.map((g, idx) => {
             
-            // CORREÇÃO 3: Lógica para tratar o grupo 'R' (Repescagem) separadamente
+            // Lógica para tratar o grupo 'R' (Repescagem) separadamente
             const isRepechage = g === 'R';
             const groupMatches = isRepechage 
                 ? matchesByPhase.repechage 
@@ -450,7 +517,7 @@ export default function Chaveamento() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {/* CORREÇÃO 3: Garante que a tabela use o grupo correto */}
+                                {/* Garante que a tabela use o grupo correto */}
                                 {(state!.groupTables[g] as GroupTableItem[] | undefined)?.map(
                                     (r, idx2) => (
                                     <tr

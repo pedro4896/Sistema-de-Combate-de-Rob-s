@@ -23,6 +23,10 @@ export interface Tournament {
   repechageAdvanceCount: number;
   repechageWinner?: Robot | null; 
   useRepechage: boolean;
+  // Campos atualizados para o pódio
+  overallWinner?: Robot | null; 
+  secondPlace?: Robot | null; // NOVO: 2º Lugar
+  thirdPlace?: Robot | null;  // NOVO: 3º Lugar
 }
 
 export interface Match {

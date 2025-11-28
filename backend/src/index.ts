@@ -1518,6 +1518,11 @@ async function activateTournament(tournamentId: string) {
     return { ok: true, message: `Torneio "${tournament.name}" ativado e chaveamento gerado.` };
 }
 
+// ... (omitting imports and unchanged code)
+
+// NOVO UTILITÁRIO: Carrega dados completos (matches e tables) para qualquer torneio
+// ... (código anterior)
+
 // NOVO UTILITÁRIO: Carrega dados completos (matches e tables) para qualquer torneio
 async function loadTournamentData(tournamentId: string) {
     if (!dbClient || !tournamentId) return null;
@@ -1553,17 +1558,183 @@ async function loadTournamentData(tournamentId: string) {
     const matchesForTables = matches.filter(m => m.phase === 'groups' || m.phase === 'repechage');
     const groupTables = computeGroupTables(robots, matchesForTables);
     
-    // 3. Determinar o vencedor final (Overall Winner) e Vencedor da Repescagem
+    // 3. Determinar o vencedor final (Overall Winner), 2º e 3º lugares
     let overallWinner: Robot | null = null;
+    let secondPlace: Robot | null = null; 
+    let thirdPlace: Robot | null = null;  
     let repechageWinner: Robot | null = null;
     
     const finalEliminationMatches = matches.filter(m => m.phase === 'elimination' && m.group === null).sort((a, b) => b.round - a.round);
     
+    // =======================================================
+    // 3a. Determinação de 1º e 2º lugares (Vencedor e Perdedor da Final)
+    // =======================================================
     if (finalEliminationMatches.length > 0) {
-        // O vencedor é o winner da última partida da última rodada da Fase Final Geral
         const finalMatch = finalEliminationMatches[0];
+        const maxRound = finalMatch.round;
+
         if (finalMatch.finished) {
             overallWinner = finalMatch.winner;
+            
+            // 2º Lugar: O perdedor da final
+            if (overallWinner) {
+                const winnerId = overallWinner.id;
+                // O 2º lugar é o robô que não venceu a final (e não é nulo/bye)
+                const loserA = (finalMatch.robotA?.id !== winnerId && finalMatch.robotA?.id !== 'bye') ? finalMatch.robotA : null;
+                const loserB = (finalMatch.robotB?.id !== winnerId && finalMatch.robotB?.id !== 'bye') ? finalMatch.robotB : null;
+                
+                if (loserA) secondPlace = loserA;
+                else if (loserB) secondPlace = loserB;
+            } 
+        }
+    }
+    
+    // =======================================================
+    // 3b. Determinação de 3º Lugar (Estatísticas entre os perdedores não-finalistas)
+    // =======================================================
+    
+    // O 3º lugar só é calculado se o 1º e 2º lugares foram determinados.
+    if (overallWinner && secondPlace) {
+        
+        // 1. Prioridade máxima: Partida dedicada (Round maxRound + 1)
+        if (finalEliminationMatches.length > 0) {
+            const finalMatch = finalEliminationMatches[0];
+            const maxRound = finalMatch.round;
+            
+            const thirdPlaceMatch = matches.find(m => 
+                m.phase === 'elimination' && 
+                m.group === null && 
+                m.round === maxRound + 1 &&
+                m.finished
+            );
+
+            if (thirdPlaceMatch?.winner) {
+                thirdPlace = thirdPlaceMatch.winner;
+            }
+        }
+
+        // 2. Se o 3º lugar não foi determinado por partida, use estatísticas gerais
+        if (!thirdPlace) {
+
+            const thirdPlaceCandidates: Robot[] = [];
+            const nonFinalistIds = new Set<string>();
+
+            const currentFinalRound = finalEliminationMatches.length > 0 ? finalEliminationMatches[0].round : 0;
+            
+            if (currentFinalRound > 1) { 
+                // Caso 1: Semifinais existiram na Fase Final Geral (4+ participantes)
+                // Candidatos são os perdedores das semifinais (Round maxRound - 1)
+                const semiFinalMatches = matches.filter(m => 
+                    m.phase === 'elimination' && 
+                    m.group === null && 
+                    m.round === currentFinalRound - 1 && 
+                    m.finished
+                );
+                
+                for (const m of semiFinalMatches) {
+                    if (!m.winner || !m.robotA || !m.robotB) continue; 
+                    
+                    const loserId = m.robotA.id !== m.winner.id ? m.robotA.id : m.robotB.id;
+                    const loserRobot = robots.find(r => r.id === loserId && r.id !== 'bye');
+                    
+                    if (loserRobot) {
+                        thirdPlaceCandidates.push(loserRobot);
+                    }
+                }
+            } else { 
+                // Caso 2: Final Direta (máximo de 2 participantes na chave geral - como o seu cenário de 6 robôs)
+                // Candidatos são os perdedores das Finais de Grupo (Última rodada de eliminação com group != null)
+                const eliminationGroupMatches = matches.filter(m => m.phase === 'elimination' && m.group !== null && m.finished);
+                if (eliminationGroupMatches.length > 0) {
+                    const maxGroupRound = eliminationGroupMatches.reduce((max, m) => Math.max(max, m.round), 0);
+                    const finalGroupMatches = eliminationGroupMatches.filter(m => m.round === maxGroupRound);
+
+                    // Coleta os perdedores das finais de grupo (que deveriam ser 2)
+                    for (const m of finalGroupMatches) {
+                        if (!m.winner || !m.robotA || !m.robotB) continue; 
+                        
+                        const loserId = m.robotA.id !== m.winner.id ? m.robotA.id : m.robotB.id;
+                        const loserRobot = robots.find(r => r.id === loserId && r.id !== 'bye');
+                        
+                        // Garante que o robô não é o 1º ou 2º lugar (filtrando os campeões de grupo)
+                        if (loserRobot && loserRobot.id !== overallWinner.id && loserRobot.id !== secondPlace.id) {
+                            if (!nonFinalistIds.has(loserRobot.id)) {
+                                thirdPlaceCandidates.push(loserRobot);
+                                nonFinalistIds.add(loserRobot.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (thirdPlaceCandidates.length > 0) {
+                // CÁLCULO DE ESTATÍSTICAS E ORDENAÇÃO
+                const allTournamentMatches = matches.filter(m => m.tournamentId === tournamentId && m.finished);
+                const candidateStatsMap: Record<string, GroupTableItem> = {};
+                const allRobotStatsMap: Record<string, GroupTableItem> = {};
+                
+                thirdPlaceCandidates.forEach(r => {
+                    if (r.id) allRobotStatsMap[r.id] = { robotId: r.id, name: r.name, team: r.team, pts: 0, wins: 0, draws: 0, losses: 0, ko: 0, wo: 0 };
+                });
+                
+                // Acumula estatísticas para todos os candidatos
+                for (const m of allTournamentMatches) {
+                    const A = m.robotA?.id;
+                    const B = m.robotB?.id;
+                    
+                    const isCandidateA = A && allRobotStatsMap[A];
+                    const isCandidateB = B && allRobotStatsMap[B];
+                    
+                    if (!A || !B || A === 'bye' || B === 'bye') continue;
+
+                    const statA = allRobotStatsMap[A];
+                    const statB = allRobotStatsMap[B];
+
+                    if (!statA && !statB) continue; 
+
+                    // Regras de Pontuação: 3pts Win, 1pt Draw
+                    if (m.scoreA > m.scoreB) {
+                        if (statA) { statA.pts += 3; statA.wins++; }
+                        if (statB) { statB.losses++; }
+                    } else if (m.scoreB > m.scoreA) {
+                        if (statB) { statB.pts += 3; statB.wins++; }
+                        if (statA) { statA.losses++; }
+                    } else if (m.scoreA === m.scoreB && m.scoreA > 0) { 
+                        if (statA) { statA.pts++; statA.draws++; }
+                        if (statB) { statB.pts++; statB.draws++; }
+                    }
+
+                    if (m.type === "KO" && m.winner) {
+                        const winnerStat = m.winner.id && allRobotStatsMap[m.winner.id];
+                        if (winnerStat) winnerStat.ko = (winnerStat.ko || 0) + 1;
+                    }
+                    if (m.type === "WO" && m.winner) {
+                        const winnerStat = m.winner.id && allRobotStatsMap[m.winner.id];
+                        if (winnerStat) winnerStat.wo = (winnerStat.wo || 0) + 1;
+                    }
+                }
+                
+                // Filtra apenas os objetos de estatísticas dos candidatos
+                const candidateStats = thirdPlaceCandidates
+                    .map(r => allRobotStatsMap[r.id!])
+                    .filter(Boolean);
+
+
+                // Ordenar os candidatos com as regras de desempate
+                const sortedCandidates = candidateStats.sort(
+                    (a, b) =>
+                        b.pts - a.pts || // Prioridade 1: Pontos
+                        b.wins - a.wins || // Prioridade 2: Vitórias
+                        b.ko - a.ko || // Prioridade 3: K.O.s
+                        a.losses - b.losses || // Prioridade 4: Menos derrotas
+                        a.name.localeCompare(b.name) // Desempate final
+                );
+
+                if (sortedCandidates.length > 0) {
+                    const thirdPlaceId = sortedCandidates[0].robotId;
+                    thirdPlace = robots.find(r => r.id === thirdPlaceId) || null;
+                }
+            }
         }
     }
     
@@ -1577,8 +1748,10 @@ async function loadTournamentData(tournamentId: string) {
     // 4. Cria o objeto de torneio a ser enviado ao frontend, incluindo os novos campos
     const tournamentData: Tournament = {
         ...tournament,
-        overallWinner, // NOVO
-        repechageWinner, // NOVO
+        overallWinner,
+        secondPlace, 
+        thirdPlace, 
+        repechageWinner, 
     }
 
     return { matches, groupTables, tournament: tournamentData };
