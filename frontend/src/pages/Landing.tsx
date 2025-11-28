@@ -64,21 +64,22 @@ export default function Landing() {
       {/* 🤖 SEÇÃO HERO - MAIS IMPACTO */}
       <div className="w-full max-w-4xl text-center px-6 mb-24">
         <img
-          src="/roboClash.png"
+          src="/copergas.png"
           alt="Logo RoboClash"
-          className="w-40 h-40 object-contain mx-auto mb-6" 
+          className="w-68 h-40 object-contain mx-auto mb-5 filter brightness-140" 
         />
         
         {/* Título principal */}
         <h1 className="text-7xl font-extrabold mb-2 
                        bg-clip-text text-transparent 
-                       bg-gradient-to-r from-[#00FF9C] to-white/90">
-          ROBOCLASH ARENA
+                       bg-gradient-to-r from-[#00FF9C] to-white/50">
+          Arena Robótica Copergás
         </h1>
         
         {/* ⭐️ Frase de Destaque 1 (Otimizada) */}
         <h2 className="text-2xl font-semibold text-white/80 mb-6">
-            O ápice da engenharia em combate. **Sua vitória começa na nossa plataforma**.
+        <br></br>
+            O ápice da engenharia em combate. <strong>Sua vitória começa na nossa plataforma</strong>.
         </h2>
         
         {/* ⭐️ Slogan Curto (Otimizado) */}
@@ -88,7 +89,7 @@ export default function Landing() {
         
         {/* Botão principal de Ação */}
         <a 
-          href="/screen" 
+          href="https://novo.copergas.com.br" 
           className="mt-4 px-10 py-3 bg-[#00FF9C] text-[#0A0A0A] font-bold 
                      rounded-full shadow-lg hover:shadow-[#00FF9C]/50 
                      transition-all duration-300 uppercase tracking-widest text-lg inline-block"

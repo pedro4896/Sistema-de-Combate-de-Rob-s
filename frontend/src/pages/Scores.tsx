@@ -94,7 +94,10 @@ const submitResult = async () => {
     headers: { "Content-Type": "application/json" },
   });
 
-  toast.success(`${resultType} aplicado! Robô ${selectedRobotId} ganhou com 33 pontos`);
+  const winnerRobot = state.robots.find((r: Robot) => r.id === selectedRobotId);
+  const winnerName = winnerRobot?.name ?? selectedRobotId;
+ 
+  toast.success(`${resultType} aplicado! Robô ${winnerName} ganhou com 33 pontos`);
   setShowModal(false);  // Fecha o modal
   setSelectedRobotId(null);  // Reseta o robô selecionado
 };
