@@ -1892,7 +1892,6 @@ app.post("/db/load", async (_req, res) => {
 });
 
 // POST: Criar Torneio (Draft)
-// POST: Criar Torneio (Draft)
 app.post("/tournaments", async (req, res) => {
   const { name, description, image, groupCount = 2, advancePerGroup = 2, repechageAdvanceCount = 1 } = req.body;
 
@@ -2253,6 +2252,7 @@ app.post("/matches/elimination", (req, res) => {
 app.post("/matches/:id/start", (req, res) => {
   startMatch(req.params.id);
   res.json({ ok: true });
+  console.log("Recebido às: ", new Date().getTime())
 });
 
 app.post("/matches/:id/result", (req, res) => {
