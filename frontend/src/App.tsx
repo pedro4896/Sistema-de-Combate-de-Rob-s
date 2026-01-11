@@ -66,11 +66,11 @@ export default function App() {
           <div className="flex items-center gap-2">
             {/* CORRIGIDO: Agora usa setTab para navegação interna, evitando recarga de página */}
             <a onClick={() => setTab("landing")} className="cursor-pointer w-32 h-32 flex items-center justify-center">
-              <img
+              {/* <img
                 src="/copergas.png"
                 alt="Logo RoboClash"
                 className="w-full h-full object-contain filter brightness-140"
-              />
+              /> */}
             </a>
           </div>
 

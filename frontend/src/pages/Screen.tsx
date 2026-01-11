@@ -18,7 +18,10 @@ export default function Screen() {
 
       // 1. Tenta encontrar a luta ativa (running/paused/idle with ID)
       const activeMatch = state.matches.find((m: any) => m.id === state.currentMatchId);
-      if (activeMatch) return activeMatch;
+      if (activeMatch) 
+        
+        console.log("Atualizado às: ", new Date().getTime())
+        return activeMatch;
 
       // 2. Se não há luta ativa, procura a última luta finalizada na lista para exibir o vencedor,
       // garantindo que o placar da luta anterior permaneça no telão.

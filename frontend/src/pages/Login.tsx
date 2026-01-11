@@ -85,9 +85,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           Acesso restrito ao administrador
         </p>
         {/* Adicionando a dica de credenciais para evitar falha de autenticação */}
-        <p className="text-xs text-red-500 mt-2">
-          Credenciais: usuário 'admin', senha '123456'
-        </p>
+
       </div>
     </div>
   );
